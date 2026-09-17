@@ -1,0 +1,342 @@
+/* worlds.css — the stage the genre scenery stands on, and the things
+   that drift through it. */
+
+/* ==========================================================
+   THE STAGE
+   ========================================================== */
+
+.world {
+  position: fixed;
+  inset: 0;
+  z-index: -1;               /* behind everything, above .ambient */
+  pointer-events: none;
+  overflow: hidden;
+}
+.world[hidden] { display: none; }
+
+.world__layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1100ms var(--ease-soft);
+  will-change: opacity;
+}
+.world__layer.is-front { opacity: 1; }
+
+/* The backdrop is scenery, not content, and it sits under body text that
+   has to stay readable. Two things keep it in its place:
+     • low opacity
+     • a reverse vignette that fades the middle of the screen, where the
+       cards live, and leaves the scene strongest around the edges
+   The result is a room you are standing in rather than a texture printed
+   across the page. */
+.world__layer > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: .34;
+  -webkit-mask-image: radial-gradient(ellipse 78% 62% at 50% 46%,
+    rgb(0 0 0 / .18) 0%, rgb(0 0 0 / .55) 52%, #000 88%);
+  mask-image: radial-gradient(ellipse 78% 62% at 50% 46%,
+    rgb(0 0 0 / .18) 0%, rgb(0 0 0 / .55) 52%, #000 88%);
+}
+[data-theme="light"] .world__layer > svg { opacity: .26; }
+
+/* ==========================================================
+   PARTICLES
+   One element each, animated purely on the compositor.
+   ========================================================== */
+
+.world__particles { position: absolute; inset: 0; }
+
+.world__particles > i {
+  position: absolute;
+  display: block;
+  animation-duration: var(--dur);
+  animation-delay: var(--delay);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  will-change: transform, opacity;
+}
+
+/* rain — mystery, and the window in the literary world */
+.p-rain {
+  width: 1.5px;
+  height: 22px;
+  border-radius: 1px;
+  background: linear-gradient(rgb(var(--world-glow) / 0), rgb(var(--world-glow) / .55));
+  animation-name: p-fall;
+}
+@keyframes p-fall {
+  from { transform: translate3d(0, -20vh, 0); opacity: 0; }
+  10%  { opacity: 1; }
+  to   { transform: translate3d(var(--drift), 115vh, 0); opacity: .2; }
+}
+
+/* fog — horror */
+.p-fog {
+  width: 52vw;
+  height: 26vh;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(var(--world-ink) / .09), transparent 72%);
+  filter: blur(22px);
+  animation-name: p-drift;
+  animation-timing-function: ease-in-out;
+}
+@keyframes p-drift {
+  from { transform: translate3d(-30vw, 0, 0) scale(var(--s)); opacity: 0; }
+  20%, 80% { opacity: 1; }
+  to   { transform: translate3d(70vw, -4vh, 0) scale(calc(var(--s) * 1.3)); opacity: 0; }
+}
+
+/* petals — romance, and the quiet room */
+.p-petal {
+  width: calc(9px * var(--s));
+  height: calc(13px * var(--s));
+  border-radius: 60% 0 60% 0;
+  background: rgb(var(--world-glow) / .55);
+  animation-name: p-flutter;
+}
+@keyframes p-flutter {
+  from { transform: translate3d(0, -12vh, 0) rotate(0deg); opacity: 0; }
+  12%  { opacity: .9; }
+  to   { transform: translate3d(var(--drift), 112vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+
+/* sparks — fantasy */
+.p-spark {
+  width: calc(4px * var(--s));
+  height: calc(4px * var(--s));
+  border-radius: 50%;
+  background: rgb(var(--world-glow) / .9);
+  box-shadow: 0 0 10px 2px rgb(var(--world-glow) / .5);
+  animation-name: p-rise;
+}
+@keyframes p-rise {
+  from { transform: translate3d(0, 10vh, 0) scale(.4); opacity: 0; }
+  25%  { opacity: 1; }
+  to   { transform: translate3d(var(--drift), -60vh, 0) scale(1); opacity: 0; }
+}
+
+/* motes — the literary world and the map room */
+.p-mote {
+  width: calc(3px * var(--s));
+  height: calc(3px * var(--s));
+  border-radius: 50%;
+  background: rgb(var(--world-ink) / .5);
+  animation-name: p-wander;
+  animation-timing-function: ease-in-out;
+}
+@keyframes p-wander {
+  from { transform: translate3d(0, 0, 0); opacity: 0; }
+  20%, 75% { opacity: .8; }
+  to   { transform: translate3d(var(--drift), -22vh, 0); opacity: 0; }
+}
+
+/* ash — dystopian.
+   Heavier and slower than motes, and it only ever goes downward. Motes
+   drift about in the light; ash is falling on you. */
+.p-ash {
+  width: calc(4px * var(--s));
+  height: calc(4px * var(--s));
+  border-radius: 1px;
+  background: rgb(var(--world-ink) / .55);
+  /* NOT `p-fall` — that name is already the rain keyframe a few rules
+     up, and redefining it here would have silently replaced the rain in
+     the mystery world with slow-falling ash. */
+  animation-name: p-ashfall;
+  animation-timing-function: linear;
+}
+@keyframes p-ashfall {
+  from { transform: translate3d(0, -12vh, 0) rotate(0deg); opacity: 0; }
+  12%, 80% { opacity: .7; }
+  to   { transform: translate3d(var(--drift), 84vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+
+/* the watching eye, which never quite settles */
+.w-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: w-eye-scan 7s var(--ease-soft) infinite;
+}
+@keyframes w-eye-scan {
+  0%, 100% { transform: translateX(-9px) scaleY(1); }
+  42% { transform: translateX(9px) scaleY(1); }
+  47% { transform: translateX(9px) scaleY(.08); }
+  50% { transform: translateX(9px) scaleY(1); }
+}
+
+/* thought bubbles — psychology */
+.p-bubble {
+  width: calc(12px * var(--s));
+  height: calc(12px * var(--s));
+  border-radius: 50%;
+  border: 1.5px solid rgb(var(--world-glow) / .45);
+  animation-name: p-rise;
+}
+
+/* coins — economics */
+.p-coin {
+  width: calc(11px * var(--s));
+  height: calc(11px * var(--s));
+  border-radius: 50%;
+  border: 2px solid rgb(var(--world-glow) / .6);
+  animation-name: p-tumble;
+}
+@keyframes p-tumble {
+  from { transform: translate3d(0, -10vh, 0) rotateY(0deg); opacity: 0; }
+  15%  { opacity: .9; }
+  to   { transform: translate3d(var(--drift), 110vh, 0) rotateY(900deg); opacity: 0; }
+}
+
+/* stars — science */
+.p-star {
+  width: calc(3px * var(--s));
+  height: calc(3px * var(--s));
+  border-radius: 50%;
+  background: rgb(var(--world-glow) / .95);
+  animation-name: p-twinkle;
+  animation-timing-function: ease-in-out;
+}
+@keyframes p-twinkle {
+  0%, 100% { opacity: .15; transform: scale(.7); }
+  50%      { opacity: 1;   transform: scale(1.4); }
+}
+
+/* confetti — the fun shelf */
+.p-confetti {
+  width: calc(7px * var(--s));
+  height: calc(10px * var(--s));
+  background: rgb(var(--world-glow) / .8);
+  animation-name: p-flutter;
+}
+.p-confetti:nth-child(3n) { background: rgb(var(--world-ink) / .5); }
+.p-confetti:nth-child(4n) { border-radius: 50%; }
+
+/* scene-level motion baked into the SVGs */
+.w-candle { animation: bob 5.5s var(--ease-soft) infinite alternate; animation-delay: var(--d); }
+.w-floatbook { animation: bob 7s var(--ease-soft) infinite alternate; animation-delay: var(--d); }
+.w-bat { animation: flap 3.2s ease-in-out infinite; animation-delay: var(--d); transform-box: fill-box; transform-origin: center; }
+@keyframes bob { from { transform: translateY(0); } to { transform: translateY(-14px); } }
+@keyframes flap { 0%, 100% { transform: translateY(0) scaleY(1); } 50% { transform: translateY(-10px) scaleY(.7); } }
+
+/* ==========================================================
+   THE ARRIVAL LINE
+   ========================================================== */
+
+#world-announce {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sp-6));
+  transform: translate(-50%, 14px);
+  z-index: 44;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-2);
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  max-width: min(90vw, 30rem);
+}
+#world-announce.is-showing { animation: announce 4200ms var(--ease-out) forwards; }
+@keyframes announce {
+  0%   { opacity: 0; transform: translate(-50%, 14px); }
+  12%  { opacity: 1; transform: translate(-50%, 0); }
+  76%  { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -8px); }
+}
+.world-announce__name {
+  font-size: var(--step--2);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.world-announce__line {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-0);
+  color: var(--accent-text);
+  text-wrap: balance;
+}
+@media (max-width: 1024px) {
+  #world-announce { bottom: calc(var(--tabbar-h) + var(--sp-4)); }
+}
+
+/* ==========================================================
+   REDUCED MOTION
+   Scenery stays (it is the point), movement stops.
+   ========================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .world__particles { display: none; }
+  .w-candle, .w-floatbook, .w-bat, .w-eye { animation: none !important; }
+  .world__layer { transition: none; }
+  #world-announce.is-showing { animation: none; opacity: 1; transform: translate(-50%, 0); }
+}
+[data-motion="off"] .world__particles { display: none; }
+[data-motion="off"] .w-candle,
+[data-motion="off"] .w-floatbook,
+[data-motion="off"] .w-bat,
+[data-motion="off"] .w-eye { animation: none !important; }
+[data-motion="off"] #world-announce.is-showing { animation: none; opacity: 1; transform: translate(-50%, 0); }
+
+/* ── the cast ─────────────────────────────────────────────────────
+   Characters, not weather. Drawn brighter than the backdrop because
+   they are meant to be looked at, and confined to the left and right
+   bands by world-stage.js so nothing ever drifts across a book title.
+
+   Movement is transform-only — no layout, no paint — so a dozen of them
+   cost one compositor pass. They are removed from the DOM entirely (not
+   merely paused) when motion is off, because the stage itself is. */
+.world__cast { position: absolute; inset: 0; }
+
+.world__creature {
+  position: absolute;
+  opacity: .72;
+  will-change: transform;
+  transform: scaleX(var(--flip, 1));
+}
+.world__creature > svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+/* A light page needs them a touch stronger to hold their own. */
+[data-theme="light"] .world__creature,
+[data-theme="parchment"] .world__creature { opacity: .82; }
+
+/* Each gait is deliberately different — a bat should not move like a
+   coin. Shared vocabulary: --dur, --delay, --sway, --flip. */
+.c-haunt   { animation: creature-haunt   var(--dur) ease-in-out var(--delay) infinite; }
+.c-flit    { animation: creature-flit    var(--dur) ease-in-out var(--delay) infinite; }
+.c-glide   { animation: creature-glide   var(--dur) linear      var(--delay) infinite; }
+.c-flutter { animation: creature-flutter var(--dur) ease-in-out var(--delay) infinite; }
+.c-orbit   { animation: creature-orbit   var(--dur) ease-in-out var(--delay) infinite; }
+.c-drift   { animation: creature-drift   var(--dur) ease-in-out var(--delay) infinite; }
+.c-bob     { animation: creature-bob     var(--dur) ease-in-out var(--delay) infinite; }
+.c-swim    { animation: creature-swim    var(--dur) ease-in-out var(--delay) infinite; }
+.c-roll    { animation: creature-roll    var(--dur) linear      var(--delay) infinite; }
+.c-peer    { animation: creature-peer    var(--dur) ease-in-out var(--delay) infinite; }
+
+/* Wings and tails beat on their own clock, faster than the body moves.
+   This is the whole difference between "a bat" and "a bat-shaped blob
+   sliding sideways". */
+.c-wing {
+  transform-origin: center;
+  animation: wing-beat .42s ease-in-out infinite;
+}
+.c-wing--r { animation-delay: -.21s; }
+.c-tail {
+  transform-origin: left center;
+  animation: tail-flick 1.1s ease-in-out infinite;
+}
+
+[data-motion="off"] .world__cast { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .world__cast { display: none; }
+}

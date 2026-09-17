@@ -1,0 +1,956 @@
+{
+    "Salvation of a Saint":  {
+                                 "coverId":  9928801,
+                                 "matched":  "Salvation of a Saint",
+                                 "author":  "ÃƒÂ¦Ã‚ÂÃ‚Â±ÃƒÂ©Ã‚â€¡Ã‚Å½ÃƒÂ¥Ã‚Å“Ã‚Â­ÃƒÂ¥Ã‚ÂÃ‚Â¾, David Pittu, Alexander O. Smith",
+                                 "year":  2012
+                             },
+    "Murder in the Family":  {
+                                 "coverId":  14405574,
+                                 "matched":  "Murder in the Family",
+                                 "author":  "Cara Hunter",
+                                 "year":  2023
+                             },
+    "Peril at End House":  {
+                               "coverId":  12996556,
+                               "matched":  "Peril at End House",
+                               "author":  "Agatha Christie",
+                               "year":  1932
+                           },
+    "Mardi Gras Masquerade":  {
+                                  "coverId":  15143141,
+                                  "matched":  "Mardi Gras Masquerade",
+                                  "author":  "Carolyn Keene",
+                                  "year":  2008
+                              },
+    "The Silent Patient":  {
+                               "coverId":  9407338,
+                               "matched":  "The Silent Patient",
+                               "author":  "Alex Michaelides",
+                               "year":  2018
+                           },
+    "The Da Vinci Code":  {
+                              "coverId":  9255229,
+                              "matched":  "The Da Vinci Code",
+                              "author":  "Dan Brown",
+                              "year":  2003
+                          },
+    "The Mahabharata Secret":  {
+                                   "coverId":  10537365,
+                                   "matched":  "The Mahabharata Secret",
+                                   "author":  "Christopher C. Doyle",
+                                   "year":  2013
+                               },
+    "The Krishna Key":  {
+                            "coverId":  10838319,
+                            "matched":  "The Krishna Key",
+                            "author":  "Ashwin Sanghi",
+                            "year":  2012
+                        },
+    "Killing Floor":  {
+                          "coverId":  11089125,
+                          "matched":  "Killing Floor",
+                          "author":  "Lee Child",
+                          "year":  1997
+                      },
+    "Die Trying":  {
+                       "coverId":  14424757,
+                       "matched":  "Die Trying",
+                       "author":  "Lee Child",
+                       "year":  1998
+                   },
+    "Tripwire":  {
+                     "coverId":  14424673,
+                     "matched":  "Tripwire",
+                     "author":  "Lee Child",
+                     "year":  1999
+                 },
+    "A Wanted Man":  {
+                         "coverId":  11101535,
+                         "matched":  "A wanted man",
+                         "author":  "Lee Child",
+                         "year":  2012
+                     },
+    "Gone Tomorrow":  {
+                          "coverId":  14425142,
+                          "matched":  "Gone Tomorrow",
+                          "author":  "Lee Child",
+                          "year":  2008
+                      },
+    "Make Me":  {
+                    "coverId":  14425076,
+                    "matched":  "Make Me",
+                    "author":  "Lee Child",
+                    "year":  2015
+                },
+    "Night School":  {
+                         "coverId":  14425063,
+                         "matched":  "Night school",
+                         "author":  "Lee Child",
+                         "year":  2014
+                     },
+    "The Blood-Dimmed Tide":  {
+                                  "coverId":  402842,
+                                  "matched":  "The blood-dimmed tide",
+                                  "author":  "Rennie Airth",
+                                  "year":  2005
+                              },
+    "The Haunting of Hill House":  {
+                                       "coverId":  4289014,
+                                       "matched":  "The Haunting of Hill House",
+                                       "author":  "Shirley Jackson",
+                                       "year":  1959
+                                   },
+    "Strange Houses":  {
+                           "coverId":  15123139,
+                           "matched":  "Strange Houses",
+                           "author":  "Uketsu, Jim Rion",
+                           "year":  2025
+                       },
+    "Zombie School":  {
+                          "coverId":  7235617,
+                          "matched":  "Why I Quit Zombie School",
+                          "author":  "Robert Lawrence Stine",
+                          "year":  2011
+                      },
+    "Scary Birthday to You!":  {
+                                   "coverId":  4976726,
+                                   "matched":  "Give Yourself Goosebumps - Scary Birthday to You!",
+                                   "author":  "Robert Lawrence Stine",
+                                   "year":  1999
+                               },
+    "You\u0027re Plant Food":  {
+                                   "coverId":  383735,
+                                   "matched":  "Give Yourself Goosebumps - You\u0027re Plant Food",
+                                   "author":  "Robert Lawrence Stine",
+                                   "year":  1998
+                               },
+    "Checkout Time at the Dead-End Hotel":  {
+                                                "coverId":  6750919,
+                                                "matched":  "Give Yourself Goosebumps - Checkout Time at the Dead-End Hotel",
+                                                "author":  "Robert Lawrence Stine",
+                                                "year":  1998
+                                            },
+    "Welcome to the Wicked Wax Museum":  {
+                                             "coverId":  385614,
+                                             "matched":  "Give Yourself Goosebumps - Welcome to the Wicked Wax Museum",
+                                             "author":  "Robert Lawrence Stine",
+                                             "year":  1996
+                                         },
+    "Thinking, Fast and Slow":  {
+                                    "coverId":  13290711,
+                                    "matched":  "Thinking, fast and slow",
+                                    "author":  "Daniel Kahneman, Removed",
+                                    "year":  2011
+                                },
+    "Predictably Irrational":  {
+                                   "coverId":  2314080,
+                                   "matched":  "Predictably Irrational",
+                                   "author":  "Dan Ariely",
+                                   "year":  2008
+                               },
+    "The Art of Thinking Clearly":  {
+                                        "coverId":  8270423,
+                                        "matched":  "The art of thinking clearly",
+                                        "author":  "Rolf Dobelli, Rolf Dobelli",
+                                        "year":  2013
+                                    },
+    "The Art of the Good Life":  {
+                                     "coverId":  8842860,
+                                     "matched":  "The Art of the Good Life",
+                                     "author":  "Rolf Dobelli",
+                                     "year":  2017
+                                 },
+    "The Social Animal":  {
+                              "coverId":  9108190,
+                              "matched":  "The Social Animal",
+                              "author":  "David Brooks - undifferentiated",
+                              "year":  2011
+                          },
+    "Social Intelligence":  {
+                                "coverId":  374152,
+                                "matched":  "Social Intelligence",
+                                "author":  "Daniel Goleman",
+                                "year":  2006
+                            },
+    "Working with Emotional Intelligence":  {
+                                                "coverId":  6426034,
+                                                "matched":  "Working with Emotional Intelligence",
+                                                "author":  "Daniel Goleman",
+                                                "year":  1998
+                                            },
+    "Focus":  {
+                  "coverId":  10398270,
+                  "matched":  "Focus",
+                  "author":  "Daniel Goleman",
+                  "year":  2013
+              },
+    "Barking Up the Wrong Tree":  {
+                                      "coverId":  10479556,
+                                      "matched":  "Barking Up the Wrong Tree",
+                                      "author":  "Eric Barker",
+                                      "year":  2017
+                                  },
+    "Originals":  {
+                      "coverId":  8870353,
+                      "matched":  "Originals",
+                      "author":  "Adam Grant",
+                      "year":  2001
+                  },
+    "Lateral Thinking":  {
+                             "coverId":  10660143,
+                             "matched":  "Lateral thinking: creativity step by step",
+                             "author":  "Edward de Bono, Alexandre Gombau Armau",
+                             "year":  1970
+                         },
+    "Inside the Nudge Unit":  {
+                                  "coverId":  13809958,
+                                  "matched":  "Inside the nudge unit",
+                                  "author":  "David Halpern",
+                                  "year":  2015
+                              },
+    "The Subtle Art of Not Giving a F*ck":  {
+                                                "coverId":  8231990,
+                                                "matched":  "The Subtle Art of Not Giving a F*ck",
+                                                "author":  "Mark Manson",
+                                                "year":  2016
+                                            },
+    "The Power of Your Subconscious Mind":  {
+                                                "coverId":  6553019,
+                                                "matched":  "The Power of Your Subconscious Mind",
+                                                "author":  "Joseph Murphy",
+                                                "year":  1963
+                                            },
+    "The Magic of Thinking Big":  {
+                                      "coverId":  480539,
+                                      "matched":  "The Magic of Thinking Big",
+                                      "author":  "David Joseph Schwartz",
+                                      "year":  1900
+                                  },
+    "Think and Grow Rich":  {
+                                "coverId":  14542536,
+                                "matched":  "Think and Grow Rich",
+                                "author":  "Napoleon Hill",
+                                "year":  1937
+                            },
+    "The 5 AM Club":  {
+                          "coverId":  10326643,
+                          "matched":  "The 5 a.m. Club",
+                          "author":  "Robin S. Sharma",
+                          "year":  2018
+                      },
+    "Discussions on Youth":  {
+                                 "coverId":  6805742,
+                                 "matched":  "Discussions on youth",
+                                 "author":  "Daisaku IkÃƒÆ’Ã‚Â©da",
+                                 "year":  1998
+                             },
+    "Sophie\u0027s World":  {
+                                "coverId":  10563354,
+                                "matched":  "Sophie\u0027s world",
+                                "author":  "Jostein Gaarder",
+                                "year":  1999
+                            },
+    "A Brief History of Time":  {
+                                    "coverId":  10432365,
+                                    "matched":  "A Brief History of Time",
+                                    "author":  "Stephen Hawking",
+                                    "year":  1988
+                                },
+    "The Gene":  {
+                     "coverId":  11320163,
+                     "matched":  "The Gene",
+                     "author":  "Siddhartha Mukherjee, Dennis Boutsikaris",
+                     "year":  2016
+                 },
+    "Factfulness":  {
+                        "coverId":  8186237,
+                        "matched":  "Factfulness",
+                        "author":  "Hans Rosling, Ola Rosling, Anna Rosling RÃƒÆ’Ã‚Â¶nnlund",
+                        "year":  2018
+                    },
+    "What the Dog Saw":  {
+                             "coverId":  8260666,
+                             "matched":  "What the dog saw and other adventure stories",
+                             "author":  "Malcolm Gladwell",
+                             "year":  2009
+                         },
+    "Curation":  {
+                     "coverId":  13324166,
+                     "matched":  "Curation",
+                     "author":  "Michael Bhaskar",
+                     "year":  2016
+                 },
+    "A Little Life":  {
+                          "coverId":  12065783,
+                          "matched":  "A Little Life",
+                          "author":  "Hanya Yanagihara",
+                          "year":  2008
+                      },
+    "The God of Small Things":  {
+                                    "coverId":  10513792,
+                                    "matched":  "The God of Small Things",
+                                    "author":  "Arundhati Roy",
+                                    "year":  1997
+                                },
+    "The Namesake":  {
+                         "coverId":  6628164,
+                         "matched":  "Interpreter of Maladies/The Namesake",
+                         "author":  "Jhumpa Lahiri",
+                         "year":  2010
+                     },
+    "Martyr!":  {
+                    "coverId":  14562207,
+                    "matched":  "Martyr!",
+                    "author":  "Kaveh Akbar",
+                    "year":  2024
+                },
+    "Intermezzo":  {
+                       "coverId":  14836043,
+                       "matched":  "Intermezzo",
+                       "author":  "Sally Rooney",
+                       "year":  2024
+                   },
+    "Beautiful World, Where Are You":  {
+                                           "coverId":  10550746,
+                                           "matched":  "Beautiful World, Where Are You",
+                                           "author":  "Sally Rooney, Octavi Gil Pujol",
+                                           "year":  2021
+                                       },
+    "Exit West":  {
+                      "coverId":  7909066,
+                      "matched":  "Exit West",
+                      "author":  "Mohsin Hamid",
+                      "year":  2017
+                  },
+    "Girl, Woman, Other":  {
+                               "coverId":  9134982,
+                               "matched":  "Girl, Woman, Other",
+                               "author":  "Bernardine Evaristo",
+                               "year":  2019
+                           },
+    "And the Mountains Echoed":  {
+                                     "coverId":  7258558,
+                                     "matched":  "And the Mountains Echoed",
+                                     "author":  "Khaled Hosseini",
+                                     "year":  2013
+                                 },
+    "A Thousand Splendid Suns":  {
+                                     "coverId":  8579790,
+                                     "matched":  "A Thousand Splendid Suns",
+                                     "author":  "Khaled Hosseini",
+                                     "year":  2007
+                                 },
+    "The Kite Runner":  {
+                            "coverId":  14846827,
+                            "matched":  "The Kite Runner",
+                            "author":  "Khaled Hosseini",
+                            "year":  2003
+                        },
+    "Ghachar Ghochar":  {
+                            "coverId":  13502048,
+                            "matched":  "Ghachar Ghochar",
+                            "author":  "Vivek Shanbhag",
+                            "year":  2017
+                        },
+    "Burnt Shadows":  {
+                          "coverId":  8248406,
+                          "matched":  "Burnt shadows",
+                          "author":  "Kamila Shamsie",
+                          "year":  2009
+                      },
+    "In the City by the Sea":  {
+                                   "coverId":  3716713,
+                                   "matched":  "In the city by the sea",
+                                   "author":  "Kamila Shamsie",
+                                   "year":  1998
+                               },
+    "Cleopatra and Frankenstein":  {
+                                       "coverId":  13308109,
+                                       "matched":  "Cleopatra and Frankenstein",
+                                       "author":  "Coco Mellors",
+                                       "year":  2022
+                                   },
+    "Tomorrow, and Tomorrow, and Tomorrow":  {
+                                                 "coverId":  12859975,
+                                                 "matched":  "Tomorrow, and Tomorrow, and Tomorrow",
+                                                 "author":  "Gabrielle Zevin",
+                                                 "year":  2022
+                                             },
+    "The Spy":  {
+                    "coverId":  13074091,
+                    "matched":  "The spy",
+                    "author":  "Paulo Coelho",
+                    "year":  2016
+                },
+    "Acts of God":  {
+                        "coverId":  14860780,
+                        "matched":  "Acts of God",
+                        "author":  "Kanan Gill",
+                        "year":  2025
+                    },
+    "Chokher Bali":  {
+                         "coverId":  111019,
+                         "matched":  "Grain of Sand (Chokher Bali)",
+                         "author":  "Rabindranath Tagore",
+                         "year":  2003
+                     },
+    "Fluid":  {
+                  "coverId":  10840424,
+                  "matched":  "Fluid",
+                  "author":  "ASHISH JAISWAL",
+                  "year":  null
+              },
+    "Before the Coffee Gets Cold":  {
+                                        "coverId":  10138333,
+                                        "matched":  "Before the Coffee Gets Cold",
+                                        "author":  "ÃƒÂ¥Ã‚Â·Ã‚ÂÃƒÂ¥Ã‚ÂÃ‚Â£ÃƒÂ¤Ã‚Â¿Ã‚Å ÃƒÂ¥Ã‚â€™Ã‚Å’",
+                                        "year":  null
+                                    },
+    "Butter":  {
+                   "coverId":  14448178,
+                   "matched":  "Butter",
+                   "author":  "Asako Yuzuki",
+                   "year":  2017
+               },
+    "Diary of a Void":  {
+                            "coverId":  13222635,
+                            "matched":  "Diary of a Void",
+                            "author":  "Emi Yagi, Lucy North, David Boyd",
+                            "year":  2022
+                        },
+    "Norwegian Wood":  {
+                           "coverId":  2237620,
+                           "matched":  "Norwegian Wood",
+                           "author":  "ÃƒÂ¦Ã‚ÂÃ‚â€˜ÃƒÂ¤Ã‚Â¸Ã‚Å ÃƒÂ¦Ã‚ËœÃ‚Â¥ÃƒÂ¦Ã‚Â¨Ã‚Â¹",
+                           "year":  1987
+                       },
+    "Pachinko":  {
+                     "coverId":  8044605,
+                     "matched":  "Pachinko",
+                     "author":  "Min Jin Lee",
+                     "year":  2017
+                 },
+    "The Book Thief":  {
+                           "coverId":  8153054,
+                           "matched":  "The Book Thief",
+                           "author":  "Markus Zusak",
+                           "year":  1998
+                       },
+    "As Long as the Lemon Trees Grow":  {
+                                            "coverId":  13872888,
+                                            "matched":  "As Long As the Lemon Trees Grow",
+                                            "author":  "Zoulfa Katouh",
+                                            "year":  2022
+                                        },
+    "The Sialkot Saga":  {
+                             "coverId":  10848586,
+                             "matched":  "The Sialkot Saga",
+                             "author":  "Ashwin Sanghi",
+                             "year":  2016
+                         },
+    "1984":  {
+                 "coverId":  14351142,
+                 "matched":  "1984",
+                 "author":  "George Orwell, AmÃƒÆ’Ã‚Â©lie Audiberti",
+                 "year":  2021
+             },
+    "Animal Farm":  {
+                        "coverId":  11261770,
+                        "matched":  "Animal Farm",
+                        "author":  "George Orwell",
+                        "year":  1945
+                    },
+    "Down and Out in Paris and London":  {
+                                             "coverId":  5539329,
+                                             "matched":  "Down and Out in Paris and London",
+                                             "author":  "George Orwell",
+                                             "year":  1933
+                                         },
+    "The Handmaid\u0027s Tale":  {
+                                     "coverId":  8231851,
+                                     "matched":  "The Handmaid\u0027s Tale",
+                                     "author":  "Margaret Atwood",
+                                     "year":  1985
+                                 },
+    "The Testaments":  {
+                           "coverId":  12366815,
+                           "matched":  "The Testaments",
+                           "author":  "Margaret Atwood",
+                           "year":  2019
+                       },
+    "To Kill a Mockingbird":  {
+                                  "coverId":  14351077,
+                                  "matched":  "To Kill a Mockingbird",
+                                  "author":  "Harper Lee",
+                                  "year":  1960
+                              },
+    "The Great Gatsby":  {
+                             "coverId":  10590366,
+                             "matched":  "The Great Gatsby",
+                             "author":  "F. Scott Fitzgerald",
+                             "year":  1920
+                         },
+    "Pride and Prejudice":  {
+                                "coverId":  14348537,
+                                "matched":  "Pride and Prejudice",
+                                "author":  "Jane Austen",
+                                "year":  1813
+                            },
+    "Wuthering Heights":  {
+                              "coverId":  12818862,
+                              "matched":  "Wuthering Heights",
+                              "author":  "Emily BronteÃƒÅ’Ã‚Ë†",
+                              "year":  1846
+                          },
+    "Oliver Twist":  {
+                         "coverId":  13300802,
+                         "matched":  "Oliver Twist",
+                         "author":  "Charles Dickens",
+                         "year":  1822
+                     },
+    "One Flew Over the Cuckoo\u0027s Nest":  {
+                                                 "coverId":  9272688,
+                                                 "matched":  "One Flew Over the Cuckoo\u0027s Nest",
+                                                 "author":  "Ken Kesey",
+                                                 "year":  1962
+                                             },
+    "Alice in Wonderland":  {
+                                "coverId":  10527843,
+                                "matched":  "Alice\u0027s Adventures in Wonderland",
+                                "author":  "Lewis Carroll",
+                                "year":  1865
+                            },
+    "The Invisible Man":  {
+                              "coverId":  6419199,
+                              "matched":  "The Invisible Man",
+                              "author":  "H. G. Wells",
+                              "year":  0
+                          },
+    "Four Sherlock Holmes Mysteries":  {
+                                           "coverId":  10276979,
+                                           "matched":  "Sherlock Holmes. His Most Famous Mysteries (Adventure of the Gloria Scott / Adventure of the Greek Interpreter / Scandal in Bohemia / Sign of Four / Study in Scarlet)",
+                                           "author":  "Arthur Conan Doyle",
+                                           "year":  1974
+                                       },
+    "Babel":  {
+                  "coverId":  12468631,
+                  "matched":  "Babel",
+                  "author":  "R. F. Kuang",
+                  "year":  2022
+              },
+    "Katabasis":  {
+                      "coverId":  15117021,
+                      "matched":  "Katabasis",
+                      "author":  "R. F. Kuang",
+                      "year":  2025
+                  },
+    "Project Hail Mary":  {
+                              "coverId":  11200092,
+                              "matched":  "Project Hail Mary",
+                              "author":  "Andy Weir",
+                              "year":  2021
+                          },
+    "The Host":  {
+                     "coverId":  3366731,
+                     "matched":  "The Host",
+                     "author":  "Stephenie Meyer",
+                     "year":  2008
+                 },
+    "PS, I Love You":  {
+                           "coverId":  4995410,
+                           "matched":  "PS, I Love You",
+                           "author":  "Cecelia Ahern",
+                           "year":  2004
+                       },
+    "The Longest Ride":  {
+                             "coverId":  10661914,
+                             "matched":  "The longest ride",
+                             "author":  "Nicholas Sparks",
+                             "year":  2013
+                         },
+    "Our Impossible Love":  {
+                                "coverId":  10864807,
+                                "matched":  "Our Impossible Love",
+                                "author":  "Durjoy Datta",
+                                "year":  2016
+                            },
+    "The Other Woman":  {
+                            "coverId":  400535,
+                            "matched":  "The other woman",
+                            "author":  "Jane Green",
+                            "year":  2004
+                        },
+    "2 States":  {
+                     "coverId":  6994571,
+                     "matched":  "2 states",
+                     "author":  "Chetan Bhagat",
+                     "year":  2009
+                 },
+    "Revolution 2020":  {
+                            "coverId":  7011589,
+                            "matched":  "Revolution 2020",
+                            "author":  "Chetan Bhagat",
+                            "year":  2011
+                        },
+    "The Fault in Our Stars":  {
+                                   "coverId":  7418786,
+                                   "matched":  "The Fault in Our Stars",
+                                   "author":  "John Green",
+                                   "year":  2010
+                               },
+    "Where She Went":  {
+                           "coverId":  6712819,
+                           "matched":  "Where She Went",
+                           "author":  "Gayle Forman",
+                           "year":  2011
+                       },
+    "I\u0027ll Give You the Sun":  {
+                                       "coverId":  12357184,
+                                       "matched":  "I\u0027ll Give You the Sun",
+                                       "author":  "Jandy Nelson",
+                                       "year":  2014
+                                   },
+    "The Perks of Being a Wallflower":  {
+                                            "coverId":  14315052,
+                                            "matched":  "The Perks of Being a Wallflower",
+                                            "author":  "Stephen Chbosky",
+                                            "year":  1999
+                                        },
+    "Poor Economics":  {
+                           "coverId":  6765497,
+                           "matched":  "Poor Economics",
+                           "author":  "Abhijit Banerjee, Esther Duflo",
+                           "year":  2011
+                       },
+    "23 Things They Don\u0027t Tell You About Capitalism":  {
+                                                                "coverId":  7237542,
+                                                                "matched":  "23 things they don\u0027t tell you about capitalism",
+                                                                "author":  "Ha-Joon Chang",
+                                                                "year":  2010
+                                                            },
+    "Fooled by Randomness":  {
+                                 "coverId":  855791,
+                                 "matched":  "Fooled by randomness",
+                                 "author":  "Nassim Nicholas Taleb",
+                                 "year":  2001
+                             },
+    "Fifty Things That Made the Modern Economy":  {
+                                                      "coverId":  14762206,
+                                                      "matched":  "Fifty Things That Made the Modern Economy",
+                                                      "author":  "Tim Harford",
+                                                      "year":  2017
+                                                  },
+    "The Wealth of Nations":  {
+                                  "coverId":  12816911,
+                                  "matched":  "The Wealth of Nations",
+                                  "author":  "Adam Smith",
+                                  "year":  1776
+                              },
+    "The World Is Flat":  {
+                              "coverId":  10160383,
+                              "matched":  "The World Is Flat -A Brief History OF THE TWENTY-FIRST CENTURY",
+                              "author":  "Thomas L. Friedman",
+                              "year":  2005
+                          },
+    "Thank You for Being Late":  {
+                                     "coverId":  8043400,
+                                     "matched":  "Thank You for Being Late",
+                                     "author":  "Thomas L. Friedman",
+                                     "year":  2016
+                                 },
+    "Hot, Flat, and Crowded":  {
+                                   "coverId":  5698142,
+                                   "matched":  "Hot, flat, and crowded",
+                                   "author":  "Thomas L. Friedman, Oliver Wyman, Anne Houtman, Susan Karr, Jeneen InterlandI",
+                                   "year":  2008
+                               },
+    "Breakout Nations":  {
+                             "coverId":  7124313,
+                             "matched":  "Breakout nations",
+                             "author":  "Ruchir Sharma",
+                             "year":  2012
+                         },
+    "The Rise and Fall of Nations":  {
+                                         "coverId":  8876132,
+                                         "matched":  "The rise and fall of nations",
+                                         "author":  "Ruchir Sharma",
+                                         "year":  2016
+                                     },
+    "Execution":  {
+                      "coverId":  390814,
+                      "matched":  "Execution",
+                      "author":  "Ram Charan, Larry Bossidy",
+                      "year":  2002
+                  },
+    "Confronting Reality":  {
+                                "coverId":  11609168,
+                                "matched":  "Confronting reality",
+                                "author":  "Larry Bossidy",
+                                "year":  1998
+                            },
+    "Great by Choice":  {
+                            "coverId":  7137774,
+                            "matched":  "Great by choice",
+                            "author":  "Jim Collins, Morten T. Hansen",
+                            "year":  2011
+                        },
+    "Who Says Elephants Can\u0027t Dance?":  {
+                                                 "coverId":  27228,
+                                                 "matched":  "Who Says Elephants Can\u0027t Dance? Inside IBM\u0027s Historic Turnaround",
+                                                 "author":  "Louis V. Gerstner Jr.",
+                                                 "year":  2002
+                                             },
+    "Corporate Chanakya":  {
+                               "coverId":  14666488,
+                               "matched":  "Corporate Chanakya On Management",
+                               "author":  "Radhakrishnan Pillai",
+                               "year":  2012
+                           },
+    "Frugal Innovation":  {
+                              "coverId":  11450026,
+                              "matched":  "Frugal innovation",
+                              "author":  "Navi Radjou",
+                              "year":  2014
+                          },
+    "Jugaad":  {
+                   "coverId":  10559806,
+                   "matched":  "Jugaad Innovation",
+                   "author":  "Navi Radjou",
+                   "year":  2012
+               },
+    "Orbit Shifting Innovation":  {
+                                      "coverId":  8560497,
+                                      "matched":  "Orbit-Shifting Innovation: The Dynamics of Ideas that Create History",
+                                      "author":  "Rajiv Narang, Devika Devaiah",
+                                      "year":  2014
+                                  },
+    "Risk/Reward":  {
+                        "coverId":  11706663,
+                        "matched":  "Risk/reward",
+                        "author":  "Anne Kreamer",
+                        "year":  2015
+                    },
+    "Stay Hungry Stay Foolish":  {
+                                     "coverId":  9682119,
+                                     "matched":  "STAY HUNGRY STAY FOOLISH",
+                                     "author":  "Rashmi Bansal",
+                                     "year":  2008
+                                 },
+    "I Have a Dream":  {
+                           "coverId":  12175099,
+                           "matched":  "I have a dream",
+                           "author":  "Rashmi Bansal",
+                           "year":  2011
+                       },
+    "Go Kiss the World":  {
+                              "coverId":  7641255,
+                              "matched":  "Go Kiss The World Life Lessons For The Young Professional",
+                              "author":  "Subroto Bagchi",
+                              "year":  2009
+                          },
+    "Losing My Virginity":  {
+                                "coverId":  1056456,
+                                "matched":  "Losing My Virginity",
+                                "author":  "Richard Branson",
+                                "year":  1999
+                            },
+    "Steve Jobs":  {
+                       "coverId":  12374726,
+                       "matched":  "Steve Jobs",
+                       "author":  "Walter Isaacson",
+                       "year":  2011
+                   },
+    "India Unbound":  {
+                          "coverId":  226270,
+                          "matched":  "India unbound",
+                          "author":  "Gurcharan Das",
+                          "year":  2000
+                      },
+    "The Elephant Paradigm":  {
+                                  "coverId":  11625567,
+                                  "matched":  "The elephant paradigm",
+                                  "author":  "Gurcharan Das",
+                                  "year":  2002
+                              },
+    "The Difficulty of Being Good":  {
+                                         "coverId":  9435689,
+                                         "matched":  "The difficulty of being good",
+                                         "author":  "Gurcharan Das",
+                                         "year":  2009
+                                     },
+    "The Ocean of Churn":  {
+                               "coverId":  10867802,
+                               "matched":  "The Ocean of Churn",
+                               "author":  "Sanjeev Sanyal",
+                               "year":  2016
+                           },
+    "Maximum City":  {
+                         "coverId":  225645,
+                         "matched":  "Maximum City",
+                         "author":  "Suketu Mehta",
+                         "year":  2004
+                     },
+    "Imagining India":  {
+                            "coverId":  6398132,
+                            "matched":  "Imagining India",
+                            "author":  "Nandan Nilekani",
+                            "year":  2009
+                        },
+    "Rebooting India":  {
+                            "coverId":  14775706,
+                            "matched":  "Rebooting India",
+                            "author":  "Nandan Nilekani, Viral Shah",
+                            "year":  2016
+                        },
+    "Turning Points":  {
+                           "coverId":  13310509,
+                           "matched":  "Turning Points",
+                           "author":  "A. P. J. Abdul Kalam",
+                           "year":  2012
+                       },
+    "Mossad":  {
+                   "coverId":  8997685,
+                   "matched":  "Mossad",
+                   "author":  "Michael Bar-Zohar, Nissim Mishal",
+                   "year":  2012
+               },
+    "The Diary of a Young Girl":  {
+                                      "coverId":  13526331,
+                                      "matched":  "The Diary of a Young Girl- Anne Frank",
+                                      "author":  "Anne Frank",
+                                      "year":  2001
+                                  },
+    "Tuesdays with Morrie":  {
+                                 "coverId":  12560417,
+                                 "matched":  "Tuesdays with Morrie",
+                                 "author":  "Mitch Albom",
+                                 "year":  1994
+                             },
+    "Five Go to Smuggler\u0027s Top":  {
+                                           "coverId":  14599541,
+                                           "matched":  "Five Go to Smuggler\u0027s Top",
+                                           "author":  "Enid Blyton",
+                                           "year":  1945
+                                       },
+    "Five Go Off in a Caravan":  {
+                                     "coverId":  14608017,
+                                     "matched":  "Five Go Off in a Caravan",
+                                     "author":  "Enid Blyton",
+                                     "year":  1946
+                                 },
+    "Five on Kirrin Island Again":  {
+                                        "coverId":  14596524,
+                                        "matched":  "Five on Kirrin Island Again",
+                                        "author":  "Enid Blyton",
+                                        "year":  1947
+                                    },
+    "Five on a Hike Together":  {
+                                    "coverId":  14602830,
+                                    "matched":  "Five on a Hike Together",
+                                    "author":  "Enid Blyton",
+                                    "year":  1951
+                                },
+    "Good Work, Secret Seven":  {
+                                    "coverId":  14577484,
+                                    "matched":  "Good Work, Secret Seven",
+                                    "author":  "Enid Blyton",
+                                    "year":  1954
+                                },
+    "Crystal":  {
+                    "coverId":  1093513,
+                    "matched":  "Crystal",
+                    "author":  "Katie Price",
+                    "year":  2007
+                },
+    "Shopaholic Abroad":  {
+                              "coverId":  367747,
+                              "matched":  "Shopaholic Abroad (Shopaholic Series, Book 2)",
+                              "author":  "Sophie Kinsella",
+                              "year":  2001
+                          },
+    "The Secret Dreamworld of a Shopaholic":  {
+                                                  "coverId":  897531,
+                                                  "matched":  "The Secret Dreamworld of a Shopaholic (Shopaholic Series, Book 1)",
+                                                  "author":  "Sophie Kinsella",
+                                                  "year":  2000
+                                              },
+    "Can You Keep a Secret?":  {
+                                   "coverId":  240064,
+                                   "matched":  "Can You Keep A Secret?",
+                                   "author":  "Sophie Kinsella",
+                                   "year":  2003
+                               },
+    "Menaka\u0027s Choice":  {
+                                 "coverId":  10838478,
+                                 "matched":  "Menaka\u0027s Choice",
+                                 "author":  "Kavita Kane",
+                                 "year":  2015
+                             },
+    "Charlie and the Chocolate Factory":  {
+                                              "coverId":  12459564,
+                                              "matched":  "Charlie and the Chocolate Factory",
+                                              "author":  "Roald Dahl",
+                                              "year":  1964
+                                          },
+    "Homo Deus: A Brief History of Tomorrow":  {
+                                                   "coverId":  13770655,
+                                                   "matched":  "Homo DeusÃ¯Â¼Âšthe Brief History of Tomorrow",
+                                                   "author":  "Yuval Noah Harari",
+                                                   "year":  2022
+                                               },
+    "There Are Rivers in the Sky":  {
+                                        "coverId":  14653203,
+                                        "matched":  "There Are Rivers in the Sky",
+                                        "author":  "Elif Ã…Âžafak",
+                                        "year":  2024
+                                    },
+    "The Bastard of Istanbul":  {
+                                    "coverId":  1119672,
+                                    "matched":  "The Bastard of Istanbul",
+                                    "author":  "Elif Ã…Âžafak",
+                                    "year":  2006
+                                },
+    "The Alchemist":  {
+                          "coverId":  15075893,
+                          "matched":  "The Alchemist",
+                          "author":  "Paulo Coelho (Author)",
+                          "year":  2010
+                      },
+    "A World of Three Zeroes":  {
+                                    "coverId":  8862041,
+                                    "matched":  "A world of three zeros",
+                                    "author":  "Muhammad Yunus",
+                                    "year":  2014
+                                },
+    "Guaranteed to Fail":  {
+                               "coverId":  8656134,
+                               "matched":  "Guaranteed to fail",
+                               "author":  "Viral V. Acharya",
+                               "year":  2011
+                           },
+    "The New Emerging Market Multinationals":  {
+                                                   "coverId":  12179450,
+                                                   "matched":  "The new emerging market multinationals",
+                                                   "author":  "Rajeev Batra",
+                                                   "year":  2012
+                                               },
+    "Gweilo: Memories of a Hong Kong Childhood":  {
+                                                      "coverId":  9262221,
+                                                      "matched":  "GWEILO: MEMORIES OF A HONG KONG CHILDHOOD",
+                                                      "author":  "MARTIN BOOTH, Booth, Martin.",
+                                                      "year":  2004
+                                                  },
+    "Dork Diaries":  {
+                         "coverId":  10522790,
+                         "matched":  "Dork Diaries",
+                         "author":  "Rachel RenÃƒÂ©e Russell",
+                         "year":  2009
+                     },
+    "The Misadventures of Max Crumbly":  {
+                                             "coverId":  8075534,
+                                             "matched":  "The Misadventures of Max Crumbly",
+                                             "author":  "Rachel RenÃƒÂ©e Russell",
+                                             "year":  2016
+                                         }
+}

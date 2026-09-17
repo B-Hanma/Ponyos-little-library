@@ -1,0 +1,177 @@
+<!doctype html><html><head><meta charset="utf-8"><title>responsive</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap"></pre>
+<div id="frames" style="position:fixed;left:-9999px;top:0"></div>
+<script type="module">
+/**
+ * responsive.html — does anything stick out sideways?
+ *
+ * Loads the app in an iframe at a set of real device widths and asks the
+ * document whether it is wider than its own viewport. When it is, the
+ * offending elements are named, because "something overflows" is not a
+ * bug report.
+ *
+ * WHY AN IFRAME
+ * Edge clamps its own window to about 500px wide, so --window-size=390
+ * renders at 500 and crops. That looks exactly like an overflow bug and
+ * is not one. An iframe is the only way to measure a 390px viewport
+ * honestly.
+ */
+const out = document.getElementById('out');
+const say = (s) => { out.textContent += s + '\n'; };
+let fails = 0;
+
+/**
+ * True when some ancestor already clips or scrolls this element, so its
+ * sticking out is that ancestor's business and not a page overflow.
+ */
+function clipped(el, win) {
+  let node = el.parentElement;
+  const right = el.getBoundingClientRect().right;
+  while (node && node !== win.document.documentElement) {
+    const style = win.getComputedStyle(node);
+    const overflowX = style.overflowX;
+    if (overflowX === 'hidden' || overflowX === 'auto' || overflowX === 'scroll' || overflowX === 'clip') {
+      // Clipped by this ancestor unless it is itself escaping.
+      if (node.getBoundingClientRect().right <= win.innerWidth + 1) return true;
+    }
+    if (style.position === 'fixed') return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+const WIDTHS = [320, 360, 390, 430, 600, 768, 900, 1024, 1280, 1440];
+/*
+  `landing` is not a view — it is the front door, mounted outside the
+  router — but it is the first thing anyone sees and it has the widest
+  layout in the app, so it is measured first and at every width.
+*/
+const VIEWS = ['landing', 'library', 'genre', 'building', 'dna', 'stats', 'settings'];
+
+/** How each entry is loaded. */
+function urlFor(view) {
+  if (view === 'landing') return '/tools/shot.html?landing=1';
+  if (view === 'genre') return '/tools/shot.html?view=library&genre=Horror';
+  return `/tools/shot.html?view=${view}`;
+}
+
+function load(width, view) {
+  return new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.style.cssText = `width:${width}px;height:880px;border:0`;
+    frame.src = urlFor(view);
+    frame.addEventListener('load', () => {
+      // shot.html sets document.title to 'ready' as its last act.
+      const wait = setInterval(() => {
+        const doc = frame.contentDocument;
+        if (!doc || doc.title !== 'ready') return;
+        clearInterval(wait);
+        setTimeout(() => resolve({ frame, doc, win: frame.contentWindow }), 120);
+      }, 60);
+    });
+    document.getElementById('frames').append(frame);
+  });
+}
+
+for (const view of VIEWS) {
+  const bad = [];
+  for (const width of WIDTHS) {
+    const { frame, doc, win } = await load(width, view);
+    const root = doc.documentElement;
+    const over = root.scrollWidth - root.clientWidth;
+
+    /*
+      `scrollWidth > clientWidth` is not the question. Several things in
+      this app stick out past the viewport ON PURPOSE and are clipped or
+      scrolled by an ancestor:
+
+        · the ambient wash and the world scenery — full-bleed decoration
+          behind everything, clipped by overflow-x: hidden on <body>;
+        · the genre rails and the Library Mode section rails — horizontal
+          scrollers, whose contents are supposed to continue past the
+          right edge;
+        · the Library Mode floor itself, which is a world much larger
+          than the window, clipped by the viewport it is seen through.
+
+      Counting those produced nine "failures" per view, all of them
+      false, which is worse than no check at all — it trains you to
+      ignore the output. So the question asked here is the real one: is
+      anything sticking out that NOTHING is clipping?
+    */
+    const escapes = [...doc.querySelectorAll('body *')]
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter(({ el, r }) => r.width > 0
+        && r.right > win.innerWidth + 1
+        && getComputedStyle(el).position !== 'fixed'
+        && !clipped(el, win))
+      .sort((a, b) => b.r.right - a.r.right);
+
+    if (escapes.length) {
+      const culprits = escapes.slice(0, 3).map(({ el, r }) =>
+        `${el.tagName.toLowerCase()}.${(el.className || '').toString().trim().split(/\s+/)[0] || '(none)'}`
+        + ` (right ${Math.round(r.right)})`);
+      bad.push(`${width}px → ${culprits.join(', ')}`);
+    } else if (over > 1) {
+      say(`      (${view} @ ${width}px: ${over}px of clipped decoration, which is fine)`);
+    }
+    frame.remove();
+  }
+
+  if (bad.length) { fails += 1; say(`FAIL  ${view}`); bad.forEach((b) => say(`        ${b}`)); }
+  else say(`PASS  ${view} fits at ${WIDTHS.join(', ')}`);
+}
+
+say('');
+say(fails ? `${fails} view(s) overflow sideways` : 'nothing overflows sideways');
+
+/*
+  The fixed chrome, measured separately.
+
+  The check above skips position: fixed on purpose — fixed chrome is
+  allowed to sit over the page. But "allowed to sit over the page" is not
+  "allowed to run off the side of it", and the tab bar in particular
+  grows every time a destination is added. Ask each bar whether its own
+  contents fit inside it.
+*/
+say('');
+say('-- the fixed chrome --');
+let chromeFails = 0;
+for (const width of [320, 360, 390, 430, 600, 768, 1024, 1440]) {
+  const { frame, doc, win } = await load(width, 'library');
+  const notes = [];
+
+  for (const sel of ['.topbar__row', '.tabbar']) {
+    const el = doc.querySelector(sel);
+    if (!el) continue;
+    const style = win.getComputedStyle(el);
+    if (style.display === 'none') continue;
+
+    // Does the bar's own content fit inside the bar? That is the
+    // question. Where the bar's BOX sits is not: an iframe reserves room
+    // for a scrollbar, which offsets fixed elements by a few pixels and
+    // produces a failure that exists only in the harness.
+    if (el.scrollWidth > el.clientWidth + 1) {
+      notes.push(`${sel} content ${el.scrollWidth} > box ${el.clientWidth}`);
+    }
+    // And is every destination still fully inside it?
+    const bar = el.getBoundingClientRect();
+    for (const btn of el.querySelectorAll('.tabbar__btn, .topnav__btn')) {
+      const b = btn.getBoundingClientRect();
+      if (b.right > bar.right + 1 || b.left < bar.left - 1) {
+        notes.push(`"${btn.textContent.trim() || 'button'}" is outside its bar`);
+      }
+      if (btn.scrollWidth > btn.clientWidth + 1) {
+        notes.push(`"${btn.textContent.trim()}" is clipped (${btn.scrollWidth} > ${btn.clientWidth})`);
+      }
+    }
+  }
+
+  if (notes.length) { chromeFails += 1; say(`FAIL  ${width}px — ${notes.join('; ')}`); }
+  else say(`PASS  ${width}px`);
+  frame.remove();
+}
+say('');
+say(chromeFails ? `${chromeFails} width(s) with chrome overflow` : 'the bars fit at every width');
+say(fails + chromeFails ? 'FAILURES' : 'ALL PASS');
+</script>
+</body></html>

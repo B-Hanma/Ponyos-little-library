@@ -1,0 +1,745 @@
+/* components.css — buttons, books, shelves, drawer, modal, forms, toasts */
+
+/* ==========================================================
+   BUTTONS
+   ========================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: .58rem 1rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--step--1);
+  font-weight: 550;
+  white-space: nowrap;
+  transition: transform var(--t-fast) var(--ease-out),
+              background-color var(--t-fast),
+              border-color var(--t-fast),
+              color var(--t-fast),
+              box-shadow var(--t-fast);
+}
+.btn:hover { background: var(--surface-2); border-color: var(--accent-line); transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(.98); }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+
+.btn--primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  box-shadow: 0 6px 18px -8px var(--accent-line);
+}
+.btn--primary:hover { background: color-mix(in oklab, var(--accent) 88%, white); border-color: transparent; }
+
+.btn--ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
+.btn--ghost:hover { background: var(--surface-2); color: var(--text); border-color: transparent; }
+
+.btn--danger { color: #ff8b80; border-color: color-mix(in oklab, #ff8b80 35%, transparent); }
+.btn--danger:hover { background: color-mix(in oklab, #ff8b80 14%, transparent); border-color: #ff8b80; }
+
+.btn--sm { padding: .34rem .7rem; font-size: var(--step--2); }
+.btn--block { width: 100%; }
+
+.btn--enter {
+  padding: .9rem 1.8rem;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 500;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+  box-shadow: 0 14px 40px -14px var(--accent), 0 0 0 0 var(--accent-soft);
+}
+.btn--enter:hover { transform: translateY(-2px); box-shadow: 0 20px 48px -14px var(--accent), 0 0 0 10px var(--accent-soft); }
+.btn--enter svg { transition: transform var(--t-mid) var(--ease-out); }
+.btn--enter:hover svg { transform: translateX(4px); }
+
+.icon-btn {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: var(--text-dim);
+  transition: background-color var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn:active { transform: scale(.92); }
+
+/* ==========================================================
+   PILLS / CHIPS / TAGS
+   ========================================================== */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: .4rem .85rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--step--1);
+  font-weight: 550;
+  transition: all var(--t-fast) var(--ease-out);
+}
+.pill:hover { color: var(--text); border-color: var(--accent-line); }
+.pill.is-active {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  box-shadow: 0 6px 16px -8px var(--accent-line);
+}
+.pill__count {
+  font-size: var(--step--2);
+  font-variant-numeric: tabular-nums;
+  opacity: .7;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: .2rem .6rem;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: var(--step--2);
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.chip--accent { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+.chip__x { opacity: .55; font-size: 1rem; line-height: 1; }
+.chip__x:hover { opacity: 1; color: var(--accent); }
+
+.tag-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* ==========================================================
+   BOOK CARD
+   ========================================================== */
+
+.grid-books {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--sp-5) var(--sp-4);
+}
+
+.book {
+  position: relative;
+  display: grid;
+  gap: var(--sp-3);
+  text-align: left;
+  border-radius: var(--r-md);
+  padding: 0;
+  animation: card-in 480ms var(--ease-out) backwards;
+}
+.book:focus-visible { outline-offset: 6px; }
+
+/* the object itself — a small hardback seen slightly from the side */
+.book__object {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 3px 7px 7px 3px;
+  overflow: hidden;
+  box-shadow: var(--shadow-2), 0 0 0 1px rgb(0 0 0 / .18);
+  transform-origin: left center;
+  transition: transform 420ms var(--ease-out), box-shadow 420ms var(--ease-out);
+  will-change: transform;
+  background: var(--surface-2);
+}
+.book:hover .book__object,
+.book:focus-visible .book__object {
+  transform: translateY(-7px) rotate(-1.1deg) scale(1.025);
+  box-shadow: var(--shadow-3), 0 0 0 1px var(--accent-line);
+}
+
+.book__art { position: absolute; inset: 0; }
+.book__art svg { width: 100%; height: 100%; display: block; }
+.book__photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* spine + gutter lighting, drawn with gradients rather than images */
+.book__object::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 13%;
+  background: linear-gradient(90deg, var(--spine-shade), rgb(255 255 255 / .08) 62%, transparent);
+  z-index: 3;
+  pointer-events: none;
+}
+.book__object::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, rgb(255 255 255 / .12), transparent 38%),
+              linear-gradient(0deg, rgb(0 0 0 / .3), transparent 42%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* the whole cover is the click target */
+.book__hit {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: block;
+  border-radius: inherit;
+}
+.book__hit:focus-visible { outline-offset: -4px; }
+
+/* The title plate that used to sit on top of a coverless book is gone.
+   The generated cover now carries its own title and author, so the plate
+   printed a second copy of both directly over the first. */
+
+.book__meta { display: grid; gap: 2px; padding-inline: 2px; }
+.book__title {
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.book__author {
+  font-size: var(--step--2);
+  color: var(--text-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book__badges {
+  position: absolute;
+  top: var(--sp-2); right: var(--sp-2);
+  z-index: 5;
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+}
+.badge {
+  display: grid;
+  place-items: center;
+  width: 25px; height: 25px;
+  border-radius: 50%;
+  background: rgb(10 16 22 / .6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 11px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / .35);
+}
+.badge--fav { color: #ff8095; }
+.badge--fav svg { fill: currentColor; stroke: none; }
+.badge--reading { color: #9fe6b0; }
+.badge--read { color: #8ec9f0; }
+.badge--dnf { color: #c9a88e; }
+.badge--note { color: var(--accent); }
+
+.book__stars {
+  display: flex;
+  gap: 1px;
+  padding-inline: 2px;
+  color: var(--accent);
+  font-size: .68rem;
+  letter-spacing: .04em;
+}
+
+/* quick status flip, revealed on hover (and always visible on touch) */
+.book__quick {
+  position: absolute;
+  left: 50%; bottom: var(--sp-2);
+  transform: translate(-50%, 8px);
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: rgb(8 14 20 / .72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgb(255 255 255 / .12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-mid), transform var(--t-mid) var(--ease-out);
+}
+.book:hover .book__quick,
+.book:focus-within .book__quick { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.book__quick button {
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: rgb(255 255 255 / .7);
+  font-size: 11px;
+}
+.book__quick button:hover { background: rgb(255 255 255 / .16); color: #fff; }
+.book__quick button.is-on { background: var(--accent); color: var(--on-accent); }
+
+@media (hover: none) {
+  .book__quick { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+}
+
+/* ==========================================================
+   SHELF (a horizontal row of books on a real shelf)
+   ========================================================== */
+
+.shelf { margin-bottom: var(--sp-7); }
+
+.shelf__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  flex-wrap: wrap;
+}
+.shelf__titles { display: grid; gap: 4px; }
+.shelf__name {
+  font-size: var(--step-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.shelf__name em {
+  font-style: normal;
+  font-size: var(--step--2);
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-mute);
+  background: var(--surface-2);
+  border-radius: var(--r-pill);
+  padding: 1px 9px;
+}
+.shelf__quip {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--text-dim);
+}
+
+/* The rail scrolls sideways. The mask fades the last cover out at the
+   right edge so it reads as "there is more along here" rather than
+   "this book is broken". */
+.shelf__rail-wrap {
+  position: relative;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 64px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 64px), transparent 100%);
+}
+.shelf__rail-wrap.is-end {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.shelf__rail {
+  display: flex;
+  gap: var(--sp-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--sp-2) var(--sp-1) var(--sp-5);
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.shelf__rail::-webkit-scrollbar { display: none; }
+.shelf__rail > .book { flex: 0 0 148px; scroll-snap-align: start; }
+
+/* the plank the books stand on */
+.shelf__plank {
+  height: 12px;
+  border-radius: 1px 1px 3px 3px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--accent-2) 26%, var(--surface-3)) 0%,
+      color-mix(in oklab, var(--accent-2) 8%, var(--surface-3)) 22%,
+      var(--surface-3) 52%,
+      color-mix(in oklab, var(--bg-deep) 72%, var(--surface-3)) 100%);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, white 12%, transparent) inset,
+    0 14px 26px -16px rgb(0 0 0 / .95);
+  margin-top: calc(var(--sp-5) * -1 + 2px);
+}
+
+/* ==========================================================
+   DRAWER (book detail)
+   ========================================================== */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: fade-in var(--t-mid) var(--ease-out);
+}
+.scrim.is-closing { animation: fade-out 220ms var(--ease-soft) forwards; }
+
+.drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  z-index: 71;
+  width: min(560px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-3);
+  animation: drawer-in 420ms var(--ease-out);
+}
+.drawer.is-closing { animation: drawer-out 260ms var(--ease-soft) forwards; }
+
+.drawer__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: color-mix(in oklab, var(--paper) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-soft);
+}
+.drawer__head-actions { display: flex; align-items: center; gap: var(--sp-1); }
+.drawer__body { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+
+@media (max-width: 640px) {
+  .drawer {
+    top: auto;
+    left: 0;
+    width: 100%;
+    height: 92dvh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    animation: sheet-in 420ms var(--ease-out);
+  }
+  .drawer.is-closing { animation: sheet-out 260ms var(--ease-soft) forwards; }
+  .drawer__head { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+  .drawer__grab {
+    display: block;
+    width: 40px; height: 4px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    margin: 0 auto;
+  }
+}
+.drawer__grab { display: none; }
+
+/* ==========================================================
+   MODAL (forms, confirms)
+   ========================================================== */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 81;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  pointer-events: none;
+}
+.modal__panel {
+  pointer-events: auto;
+  width: min(560px, 100%);
+  max-height: min(88dvh, 900px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: modal-in 340ms var(--ease-out);
+}
+.modal.is-closing .modal__panel { animation: modal-out 200ms var(--ease-soft) forwards; }
+.modal__panel--sm { width: min(420px, 100%); }
+
+.modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-5) var(--sp-3);
+}
+.modal__title { font-size: var(--step-2); }
+.modal__sub { font-size: var(--step--1); color: var(--text-dim); margin-top: 4px; }
+.modal__body { padding: 0 var(--sp-5) var(--sp-4); overflow-y: auto; }
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-5);
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--surface-2) 50%, transparent);
+}
+
+/* ==========================================================
+   FORMS
+   ========================================================== */
+
+.field { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+.field__label {
+  font-size: var(--step--2);
+  font-weight: 650;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.field__hint { font-size: var(--step--2); color: var(--text-mute); }
+
+.input, .textarea, .select {
+  width: 100%;
+  padding: .6rem .8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: var(--step-0);
+  font-family: inherit;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast), background-color var(--t-fast);
+}
+.input::placeholder, .textarea::placeholder { color: var(--text-mute); }
+.input:focus, .textarea:focus, .select:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  background: var(--surface-2);
+}
+.textarea {
+  min-height: 7rem;
+  resize: vertical;
+  font-family: var(--font-reading);
+  line-height: 1.65;
+}
+.textarea--tall { min-height: 11rem; }
+.select { appearance: none; padding-right: 2.2rem; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 17px) center, calc(100% - 12px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+@media (max-width: 560px) { .field-row { grid-template-columns: 1fr; gap: 0; } }
+
+/* segmented status control */
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-pill);
+}
+.segmented button {
+  padding: .45rem .5rem;
+  border-radius: var(--r-pill);
+  font-size: var(--step--2);
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: background-color var(--t-fast), color var(--t-fast);
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.segmented button:hover { color: var(--text); background: var(--surface-3); }
+.segmented button.is-on { background: var(--accent); color: var(--on-accent); }
+
+/* stars */
+.stars { display: inline-flex; gap: 2px; align-items: center; }
+.stars button {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  color: var(--text-mute);
+  transition: transform var(--t-fast) var(--ease-out), color var(--t-fast);
+}
+.stars button svg { fill: none; }
+.stars button.is-on { color: var(--accent); }
+.stars button.is-on svg { fill: currentColor; stroke: currentColor; }
+.stars button:hover { transform: scale(1.22) rotate(-6deg); color: var(--accent); }
+
+/* heart */
+.heart-btn { color: var(--text-mute); }
+.heart-btn svg { transition: transform var(--t-fast) var(--ease-out); }
+.heart-btn.is-on { color: #ff6f85; }
+.heart-btn.is-on svg { fill: currentColor; stroke: currentColor; animation: heart-pop 420ms var(--ease-out); }
+
+/* switch */
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.switch:last-child { border-bottom: none; }
+.switch__text { display: grid; gap: 2px; }
+.switch__title { font-size: var(--step-0); font-weight: 550; }
+.switch__desc { font-size: var(--step--2); color: var(--text-mute); }
+.switch__track {
+  flex-shrink: 0;
+  width: 46px; height: 27px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background-color var(--t-mid);
+}
+.switch__track::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 19px; height: 19px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform var(--t-mid) var(--ease-out), background-color var(--t-mid);
+}
+.switch__track.is-on { background: var(--accent); border-color: transparent; }
+.switch__track.is-on::after { transform: translateX(19px); background: var(--on-accent); }
+
+/* ==========================================================
+   TOASTS
+   ========================================================== */
+
+.toast-root {
+  position: fixed;
+  left: 50%;
+  bottom: var(--sp-5);
+  transform: translateX(-50%);
+  z-index: 95;
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: center;
+  pointer-events: none;
+  width: min(440px, calc(100vw - 2rem));
+}
+@media (max-width: 1024px) { .toast-root { bottom: calc(var(--tabbar-h) + var(--sp-4)); } }
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: .65rem 1rem;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+  font-size: var(--step--1);
+  animation: toast-in 320ms var(--ease-out);
+  max-width: 100%;
+}
+.toast.is-closing { animation: toast-out 220ms var(--ease-soft) forwards; }
+.toast__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+.toast__msg { flex: 1; min-width: 0; }
+.toast__action { color: var(--accent-text); font-weight: 650; font-size: var(--step--2); white-space: nowrap; }
+.toast__action:hover { text-decoration: underline; }
+
+/* ==========================================================
+   EMPTY STATES
+   ========================================================== */
+
+.empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-4);
+  text-align: center;
+}
+.empty__art { font-size: 2.4rem; opacity: .8; }
+.empty__title { font-size: var(--step-2); }
+.empty__text { color: var(--text-dim); max-width: 34ch; font-family: var(--font-display); font-style: italic; }
+
+/* ==========================================================
+   ADDITIONS FOR THE GENRE-WORLD BUILD
+   ========================================================== */
+
+/* the Surprise Me button in the top bar */
+.btn--surprise {
+  flex-shrink: 0;
+  background: transparent;
+  border-color: var(--accent-line);
+  color: var(--accent-text);
+}
+.btn--surprise:hover { background: var(--accent-soft); border-color: var(--accent); }
+.btn--surprise span:first-child { font-size: 1rem; line-height: 1; }
+
+/* "+ Add a book" living inside the refine row, so it survives on mobile */
+.pill--add { border-style: dashed; }
+.pill--add:hover { border-style: solid; color: var(--accent-text); }
+
+/* the slim, collapsed mood card */
+.mood-card--slim { padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-5); }
+
+/* book cards need a stacking context so the photo covers the generated art */
+.book__art > svg,
+.book__art > img,
+.detail__cover > svg,
+.detail__cover > img,
+.rec__cover > svg,
+.rec__cover > img,
+.triage__cover > svg,
+.triage__cover > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* NOT .book__art — it is already `position:absolute; inset:0`, which both
+   sizes it and makes it a containing block. Re-declaring it relative
+   collapsed it to zero height and took every generated cover with it. */
+.detail__cover, .rec__cover, .triage__cover { position: relative; }
+
+/* a real photographed cover does not want the fake spine highlight on top */
+.book__object:has(.book__photo)::after { opacity: .55; }
+
+/* flagged rows */
+.badge--review { color: #ffce6a; }
+.review-note {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px dashed color-mix(in oklab, #ffce6a 45%, transparent);
+  background: color-mix(in oklab, #ffce6a 8%, transparent);
+  font-size: var(--step--1);
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.review-note strong { color: var(--text); }
+
+/* The photograph fades in OVER the generated cover, which is always
+   drawn underneath. A cover that never arrives — offline, dead host,
+   a URL that rotted — simply never fades in, and the designed one is
+   already there carrying the title and author. No broken-image icons,
+   no layout shift, no anonymous rectangle. */
+.book__photo { opacity: 0; transition: opacity 240ms var(--ease-out); }
+.book__photo.is-loaded { opacity: 1; }
+
+/* ------------------------------------------------------------------
+   Type on a generated cover.
+
+   The SVG is drawn with preserveAspectRatio="none" so it fills its box
+   exactly; the box is always 2:3, which is the ratio of the viewBox, so
+   nothing is actually distorted. The font is named here rather than in
+   the SVG so a generated cover uses the same serif as a real one's
+   spine would.
+   ------------------------------------------------------------------ */
+.cover__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.cover__author {
+  font-family: var(--font-body);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}

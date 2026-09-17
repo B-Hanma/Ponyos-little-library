@@ -1,0 +1,196 @@
+/* base.css — reset, typography, ambient background, focus behaviour */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  transition: background-color var(--t-mood) var(--ease-soft),
+              color var(--t-mood) var(--ease-soft);
+}
+
+body.is-locked { overflow: hidden; }
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+p { margin: 0; text-wrap: pretty; }
+
+/* ------------------------------------------------------------------
+   GLYPH SAFETY — one rule, applied everywhere, rather than per element.
+
+   Three separate rendering faults all had the same shape: a glyph that
+   needed more room than its box allowed.
+
+     1. Swashes. Display-size type switches in decorative alternates
+        whose strokes overhang the advance width, so a capital reaches
+        into its neighbour and reads as a broken letter. Turned off for
+        every heading and title in the app, not just the one that was
+        reported, because the next long title would have found it again.
+     2. Long unbroken words. A title or an author name with no space in
+        it used to push its card wider than the grid track and get
+        clipped at the edge. Now it breaks.
+     3. Ligature substitution in small caps-y labels, which is where the
+        author names in the constellation were fusing together.
+
+   This is deliberately not `font-kerning: none` — kerning is what makes
+   text look right. It is only the optional, decorative substitutions
+   that are switched off.
+   ------------------------------------------------------------------ */
+h1, h2, h3, h4, h5, h6,
+.welcome__title, .home-hero__title,
+.book__title, .book__plate-title, .detail__title,
+.page-head__title, .section__title {
+  font-variant-ligatures: no-common-ligatures no-discretionary-ligatures no-historical-ligatures;
+  font-feature-settings: "swsh" 0, "dlig" 0, "hlig" 0, "salt" 0, "titl" 0;
+  /* A word longer than the box breaks rather than escaping it. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+/* Text inside SVG — island names, author stars, room signs — has no
+   line box to wrap into, so it can only be protected by turning the
+   decorative substitutions off and letting the layout code do the
+   wrapping. It does: both the Reading Ocean and the constellation
+   measure their labels and split them onto tspans. */
+svg text {
+  font-variant-ligatures: none;
+  font-feature-settings: "swsh" 0, "dlig" 0, "hlig" 0;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button { cursor: pointer; background: none; border: none; padding: 0; }
+
+svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+::selection { background: var(--accent); color: var(--on-accent); }
+
+/* --- focus: invisible for mouse, unmissable for keyboard --- */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+
+.skip-link {
+  position: fixed;
+  top: -100px; left: var(--sp-4);
+  z-index: 200;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--r-md);
+  font-weight: 600;
+  text-decoration: none;
+  transition: top var(--t-fast);
+}
+.skip-link:focus-visible { top: var(--sp-4); }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+/* --- scrollbars --- */
+* { scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border: 3px solid var(--bg);
+  border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--accent-line); }
+
+/* ---------------  AMBIENT BACKGROUND  ---------------
+   Fixed behind everything. The two glows carry the mood
+   colour, so a mood change reads as light moving through
+   water rather than a page repaint. */
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  /* Strictly behind the world stage (-1). The wash is opaque, so if these
+     two ever share a layer the scenery disappears underneath it. */
+  z-index: -2;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ambient__wash {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in oklab, var(--surface) 70%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+  transition: background var(--t-mood) var(--ease-soft);
+}
+
+.ambient__glow {
+  position: absolute;
+  width: 65vmax;
+  height: 65vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 1;
+  transition: background-color var(--t-mood) var(--ease-soft);
+  will-change: transform;
+}
+.ambient__glow--a {
+  top: -22vmax; left: -14vmax;
+  background-color: var(--glow-a);
+  animation: drift-a 34s var(--ease-soft) infinite alternate;
+}
+.ambient__glow--b {
+  bottom: -26vmax; right: -16vmax;
+  background-color: var(--glow-b);
+  animation: drift-b 41s var(--ease-soft) infinite alternate;
+}
+
+/* A whisper of paper grain so flat colour never looks like plastic. */
+.ambient__grain {
+  position: absolute;
+  inset: -50%;
+  opacity: .035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+/* --- shared utility bits --- */
+.muted { color: var(--text-dim); }
+.mute-2 { color: var(--text-mute); }
+.serif { font-family: var(--font-display); }
+.tiny { font-size: var(--step--2); }
+.small { font-size: var(--step--1); }
+
+.eyebrow {
+  font-size: var(--step--2);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  font-weight: 600;
+}
+
+.stack > * + * { margin-top: var(--sp-4); }

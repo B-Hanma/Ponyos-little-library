@@ -1,0 +1,333 @@
+/* ============================================================
+   landing.css — the front door.
+
+   The only page in the app that is allowed to be a scene rather
+   than an interface. It is built by src/ui/landing.js before the
+   app renders, sits above everything, and removes itself on the
+   way in.
+
+   LAYOUT RULE
+   Words on one side, artwork on the other. On a narrow screen the
+   artwork comes FIRST and the words follow underneath. There is no
+   arrangement in this file that puts text over her face.
+   ============================================================ */
+
+#landing:empty { display: none; }
+
+.lp {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(120% 80% at 70% 10%, rgb(var(--world-glow) / .10), transparent 60%),
+    linear-gradient(180deg, var(--bg-deep, var(--bg)) 0%, var(--bg) 55%, var(--bg-deep, var(--bg)) 100%);
+  animation: lp-in 900ms var(--ease-out) both;
+}
+@keyframes lp-in { from { opacity: 0; } }
+
+/* Going in: the door opens toward you and the light comes up. */
+.lp.is-leaving {
+  animation: lp-out 820ms var(--ease-in, cubic-bezier(.5,0,.75,0)) forwards;
+  pointer-events: none;
+}
+@keyframes lp-out {
+  40%  { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.14); filter: blur(10px) brightness(1.25); }
+}
+/* The app behind it settles into place as the door opens. */
+.is-entering #app { animation: app-settle 820ms var(--ease-out) both; }
+@keyframes app-settle {
+  from { opacity: 0; transform: scale(.985); }
+  60%  { opacity: 1; }
+}
+
+.lp__wash { z-index: 0; }
+.lp__vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(130% 90% at 50% 40%, transparent 30%, rgb(0 0 0 / .42) 100%);
+}
+[data-theme="light"] .lp__vignette,
+[data-theme="parchment"] .lp__vignette {
+  background: radial-gradient(130% 90% at 50% 40%, transparent 40%, rgb(0 0 0 / .13) 100%);
+}
+
+/* dust in the lamplight */
+.lp__motes { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.lp__motes > i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: rgb(var(--world-glow) / .55);
+  animation: lp-drift var(--dur) linear var(--delay) infinite;
+}
+@keyframes lp-drift {
+  0%   { opacity: 0; transform: translate3d(0, 0, 0); }
+  15%, 70% { opacity: .6; }
+  100% { opacity: 0; transform: translate3d(var(--dx), -34vh, 0); }
+}
+
+.lp__inner {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-5) var(--sp-7);
+  display: grid;
+  gap: var(--sp-6);
+}
+
+/* ------------------------------------------------------------ *
+ * brand
+ * ------------------------------------------------------------ */
+
+.lp__brand { display: flex; align-items: center; gap: var(--sp-3); }
+.lp__mark { color: var(--accent-2); flex-shrink: 0; }
+.lp__mark .mk-book { stroke: var(--accent); stroke-width: 3; }
+.lp__mark .mk-wave { stroke-width: 2.6; }
+.lp__brand-text { display: grid; line-height: 1.12; }
+.lp__brand-text strong { font-family: var(--font-display); font-size: var(--step-1); font-weight: 600; }
+.lp__brand-text span {
+  font-size: var(--step--2);
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+
+/* ------------------------------------------------------------ *
+ * the stage: words beside artwork
+ * ------------------------------------------------------------ */
+
+.lp__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  align-items: center;
+  gap: var(--sp-7);
+}
+
+.lp__kicker {
+  font-size: var(--step--2);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin-bottom: var(--sp-3);
+}
+
+/*
+  Painted, not clipped. Gradient text (`background-clip: text` with a
+  transparent fill) shaves any stroke that overhangs its advance width,
+  needs a padding hack to compensate, and under some rendering paths
+  paints nothing at all. All three happened to this exact heading.
+*/
+.lp__title {
+  font-family: var(--font-title);
+  font-size: clamp(2.6rem, 7.5vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -.015em;
+  color: var(--text);
+  margin-bottom: var(--sp-4);
+}
+.lp__title em { font-style: normal; color: var(--accent-text); }
+
+.lp__line {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-1);
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 32ch;
+}
+.lp__count {
+  margin-top: var(--sp-4);
+  font-size: var(--step--1);
+  color: var(--text-mute);
+}
+.lp__count strong {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.lp__enter {
+  margin-top: var(--sp-5);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: .85rem 1.6rem;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--step-0);
+  font-weight: 600;
+  box-shadow: 0 12px 30px -10px var(--accent-line), var(--shadow-2);
+  transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast);
+}
+.lp__enter:hover { transform: translateY(-2px); box-shadow: 0 18px 38px -12px var(--accent-line), var(--shadow-3); }
+.lp__enter:active { transform: translateY(0); }
+.lp__enter svg { stroke: currentColor; stroke-width: 2.2; fill: none; }
+
+.lp__fineprint {
+  margin-top: var(--sp-3);
+  font-size: var(--step--2);
+  color: var(--text-mute);
+}
+
+/* ------------------------------------------------------------ *
+ * the artwork, and the kitten in front of it
+ * ------------------------------------------------------------ */
+
+.lp__art { position: relative; justify-self: center; width: 100%; max-width: 30rem; }
+
+.lp__scene {
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3), 0 0 0 1px rgb(var(--world-glow) / .22);
+  /* A soft edge so the panel sits IN the scene rather than on it. */
+  -webkit-mask-image: radial-gradient(125% 115% at 50% 45%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(125% 115% at 50% 45%, #000 62%, transparent 100%);
+  animation: lp-float 13s var(--ease-soft) infinite;
+}
+@keyframes lp-float {
+  0%, 100% { transform: translateY(0) rotate(-.35deg); }
+  50%      { transform: translateY(-10px) rotate(.35deg); }
+}
+
+.lp__kitten {
+  position: absolute;
+  left: -14px;
+  bottom: -18px;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  filter: drop-shadow(0 10px 20px rgb(0 0 0 / .35));
+}
+.lp__bubble {
+  order: -1;
+  align-self: flex-start;
+  margin-bottom: 18px;
+  padding: .4rem .75rem;
+  border-radius: var(--r-lg) var(--r-lg) 3px var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-1);
+  font-family: var(--font-hand);
+  font-size: var(--step--1);
+  color: var(--text);
+  white-space: nowrap;
+  animation: lp-pop 700ms var(--ease-out) 900ms both;
+}
+@keyframes lp-pop { from { opacity: 0; transform: translateY(6px) scale(.9); } }
+
+/* ------------------------------------------------------------ *
+ * the doors
+ * ------------------------------------------------------------ */
+
+.lp__doors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: var(--sp-4);
+}
+.lp__door {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  text-align: left;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--surface) 80%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: transform var(--t-fast) var(--ease-out),
+              border-color var(--t-fast), box-shadow var(--t-fast);
+  animation: lp-rise 700ms var(--ease-out) both;
+  animation-delay: calc(360ms + var(--i) * 90ms);
+}
+@keyframes lp-rise { from { opacity: 0; transform: translateY(14px); } }
+.lp__door:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-2);
+}
+.lp__door-art { display: block; width: 46px; flex-shrink: 0; }
+.lp__door-art svg { width: 100%; height: auto; stroke: none; }
+.lp__door-body { display: grid; gap: 2px; min-width: 0; }
+.lp__door-name { font-family: var(--font-display); font-size: var(--step-0); color: var(--text); }
+.lp__door-note { font-size: var(--step--2); color: var(--text-mute); }
+.lp__door-go { stroke: var(--text-mute); stroke-width: 2; fill: none; flex-shrink: 0; }
+.lp__door:hover .lp__door-go { stroke: var(--accent-text); }
+
+/* ------------------------------------------------------------ *
+ * the closing lines
+ * ------------------------------------------------------------ */
+
+.lp__quote {
+  text-align: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-0);
+  color: var(--text-dim);
+  text-wrap: balance;
+}
+.lp__strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2) var(--sp-5);
+  font-size: var(--step--2);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.lp__strip span { position: relative; }
+.lp__strip span + span::before {
+  content: '·';
+  position: absolute;
+  left: calc(var(--sp-5) / -2 - 2px);
+  color: var(--accent);
+}
+
+/* ============================================================
+   responsive — artwork first, words after. Never words on top.
+   ============================================================ */
+
+@media (max-width: 900px) {
+  .lp { place-items: start center; }
+  .lp__stage { grid-template-columns: 1fr; gap: var(--sp-5); }
+  .lp__art { order: -1; max-width: 22rem; }
+  .lp__line { max-width: none; }
+  .lp__inner { padding: var(--sp-5) var(--sp-4) var(--sp-7); gap: var(--sp-5); }
+}
+
+@media (max-width: 520px) {
+  .lp__art { max-width: 17rem; }
+  .lp__kitten { left: -6px; bottom: -10px; scale: .8; transform-origin: bottom left; }
+  .lp__title { font-size: clamp(2.1rem, 11vw, 3rem); }
+  .lp__door { padding: var(--sp-3); }
+  .lp__strip { gap: var(--sp-2) var(--sp-4); }
+  .lp__strip span + span::before { left: calc(var(--sp-4) / -2 - 2px); }
+}
+
+/* ============================================================
+   stillness
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .lp, .lp__scene, .lp__door, .lp__bubble, .lp__motes > i { animation: none !important; }
+  .lp.is-leaving { animation: none !important; opacity: 0; }
+  .is-entering #app { animation: none !important; }
+  .lp__motes { display: none; }
+}
+[data-motion="off"] .lp__motes { display: none; }
+[data-motion="off"] .lp__scene,
+[data-motion="off"] .lp__door,
+[data-motion="off"] .lp__bubble { animation: none !important; }

@@ -1,0 +1,124 @@
+/* ============================================================
+   scenes.css — her artwork, cropped to one panel at a time.
+
+   THE MECHANISM
+   Every artwork file is a collage. `.scene` is the window; the
+   <img> inside it is blown up by 1/cropWidth and shoved left and
+   up by the crop origin, so exactly one panel lands on the
+   window. All in percentages, so it survives any resize and any
+   future re-export of the artwork at a different size.
+
+   TWO FITS
+     .scene--box    the window takes the panel's aspect ratio
+     .scene--cover  the panel fills a window of any shape
+   ============================================================ */
+
+.scene {
+  position: relative;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--surface-2);
+}
+
+.scene__img {
+  position: absolute;
+  display: block;
+  max-width: none;          /* the crop maths sets width; do not clamp it */
+  object-fit: fill;         /* the box IS the crop, so no second crop */
+}
+
+/* --- fit: cover -------------------------------------------------
+   The inner box keeps the panel's ratio and is grown until it
+   covers the window in both directions, then centred. This is the
+   classic cover trick, done on a box rather than on the image, so
+   the crop maths inside is untouched. */
+.scene--cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.scene--cover .scene__box {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+/* --- empty ------------------------------------------------------ */
+.scene--empty {
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(70% 70% at 50% 40%, rgb(var(--world-glow) / .12), transparent 70%),
+    var(--surface-2);
+  border: 1px dashed var(--border-soft);
+}
+.scene__empty-art { display: grid; justify-items: center; gap: var(--sp-2); padding: var(--sp-4); }
+.scene__empty-note {
+  font-size: var(--step--2);
+  color: var(--text-mute);
+  text-align: center;
+  max-width: 22ch;
+  line-height: 1.5;
+}
+.scene__empty-note code {
+  font-family: var(--font-mono);
+  font-size: .92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--text) 10%, transparent);
+}
+
+/* ============================================================
+   A framed panel: mount, shadow, caption UNDERNEATH.
+   ============================================================ */
+
+.pframe { margin: 0; rotate: var(--tilt, 0deg); }
+.pframe__mount {
+  overflow: hidden;
+  border-radius: var(--r-md);
+  padding: 9px;
+  background: linear-gradient(150deg, rgb(var(--world-glow) / .32), rgb(var(--world-ink) / .3));
+  box-shadow: var(--shadow-2), 0 0 0 1px var(--border-soft);
+}
+.pframe__mount .scene { border-radius: var(--r-sm); }
+.pframe__caption {
+  margin-top: var(--sp-2);
+  text-align: center;
+  font-family: var(--font-hand);
+  font-size: var(--step--2);
+  color: var(--text-mute);
+}
+
+/* ============================================================
+   A wash: the ONE place artwork is allowed behind text, and at
+   this blur there is no face left to obscure.
+   ============================================================ */
+
+.scene-wash {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 0;
+}
+.scene-wash .scene__box {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+.scene-wash .scene__img {
+  position: absolute;
+  max-width: none;
+  filter: blur(34px) saturate(1.2);
+  opacity: .34;
+}
+[data-theme="light"] .scene-wash .scene__img { opacity: .24; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scene__img { transition: none !important; }
+}

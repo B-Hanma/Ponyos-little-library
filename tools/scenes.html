@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><title>scenes</title>
+<link rel="stylesheet" href="/styles/tokens.css">
+<link rel="stylesheet" href="/styles/base.css">
+<link rel="stylesheet" href="/styles/scenes.css">
+<link rel="stylesheet" href="/styles/personality.css">
+<style>
+  /*
+    A contact sheet of every crop in scenes.js.
+
+    This exists because a crop rectangle is four numbers typed by eye, and
+    four numbers typed by eye are wrong until proven otherwise. Reading
+    them tells you nothing; seeing forty panels side by side makes a bad
+    one obvious in a second.
+  */
+  body { padding: 20px; background: var(--bg); color: var(--text); font-family: var(--font-body); }
+  h1 { font-family: var(--font-display); margin-bottom: 4px; }
+  .note { color: var(--text-mute); font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; margin-top: 6px; line-height: 1.45; }
+  .id { font-family: var(--font-mono); color: var(--accent-text); }
+  .roles { color: var(--text-mute); }
+  .file { color: var(--text-mute); opacity: .6; font-size: 11px; }
+</style>
+</head><body>
+<h1>Every crop, side by side</h1>
+<p class="note" id="note">…</p>
+<div class="grid" id="grid"></div>
+
+<script type="module">
+import { loadPortraits, allPortraits } from '/src/data/portraits.js';
+import { allScenes, sceneCount } from '/src/data/scenes.js';
+import { scene } from '/src/ui/scene.js';
+
+await loadPortraits();
+const list = allScenes();
+
+document.getElementById('note').textContent =
+  `${allPortraits().length} artwork files → ${sceneCount()} panels. `
+  + `If a panel shows two scenes, or cuts a face in half, its rectangle in scenes.js is wrong.`;
+
+document.getElementById('grid').innerHTML = list.map((s) => {
+  const [x, y, w, h] = s.box;
+  const style = `width:${(100 / w).toFixed(3)}%;height:${(100 / h).toFixed(3)}%;`
+    + `left:${(-x * 100 / w).toFixed(3)}%;top:${(-y * 100 / h).toFixed(3)}%`;
+  return `
+  <figure>
+    <div class="scene scene--box" style="aspect-ratio:${(s.ratio || 1.4).toFixed(3)};border-radius:8px">
+      <img class="scene__img" src="${s.src}" alt="" style="${style}">
+    </div>
+    <figcaption>
+      <span class="id">${s.id}</span><br>
+      <span class="roles">${s.roles.join(' · ')}</span><br>
+      <span class="file">${s.file}</span>
+    </figcaption>
+  </figure>`;
+}).join('');
+
+document.title = 'ready';
+</script>
+</body></html>

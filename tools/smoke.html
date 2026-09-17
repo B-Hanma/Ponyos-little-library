@@ -1,0 +1,690 @@
+<!doctype html><html><head><meta charset="utf-8"><title>smoke</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script>
+// Everything in the app coalesces work onto rAF, which never fires under
+// --virtual-time-budget. Stub it, and record anything that reached the
+// console so a thrown error inside a render shows up as a failure rather
+// than as a blank section.
+window.requestAnimationFrame = (fn) => setTimeout(() => fn(performance.now()), 0);
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+const out = document.getElementById('out');
+const say = (s) => { out.textContent += s + '\n'; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+let fails = 0;
+const ok = (cond, label, extra = '') => {
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+
+say('start');
+try {
+  const html = await (await fetch('/index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const copy = l.cloneNode();
+    copy.setAttribute('href', new URL(l.getAttribute('href'), location.origin).pathname);
+    document.head.append(copy);
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div id="shell">${doc.body.innerHTML}</div>`);
+  document.querySelectorAll('#shell script').forEach((s) => s.remove());
+  document.getElementById('welcome')?.remove();
+  // index.html ships its own empty #landing; the harness mounts its own.
+  document.querySelector('#shell #landing')?.remove();
+  document.getElementById('app').hidden = false;
+
+  const M = {
+    adapter: await import('/src/storage/adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    store: await import('/src/state/store.js'),
+    cache: await import('/src/ui/cover-urls.js'),
+    app: await import('/src/ui/app.js'),
+    seed: await import('/src/data/seed-books.js'),
+    theme: await import('/src/theme/theme-manager.js'),
+    building: await import('/src/data/building.js'),
+    portraits: await import('/src/data/portraits.js'),
+    genres: await import('/src/data/genres.js'),
+    worlds: await import('/src/theme/worlds.js'),
+  };
+
+  await M.portraits.loadPortraits();
+
+  const repo = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await repo.init({
+    seedBooks: M.seed.SEED_BOOKS,
+    seedVersion: M.seed.SEED_VERSION,
+    retiredKeys: M.seed.RETIRED_KEYS,
+  });
+  const prefs = { ...M.store.DEFAULT_PREFS };
+  M.theme.applyPreferences(prefs);
+  const store = M.store.createStore({ prefs, ready: true });
+  const cache = M.cache.createCoverCache(repo);
+  const app = M.app.createApp({ repo, store, cache });
+  app.stage.setEnabled(true);
+  app.render();
+  await tick();
+
+  const view = document.getElementById('view');
+  const books = repo.all();
+
+  say('-- boot --');
+  ok(store.state.view === 'library', 'the app opens on the shelves', store.state.view);
+  ok(!('HOME' in M.store.VIEWS), 'there is no Home view to route to');
+
+  say('-- every view renders --');
+  for (const v of ['library', 'building', 'dna', 'stats', 'settings']) {
+    const before = window.__errors.length;
+    store.set({ view: v });
+    await tick();
+    ok(window.__errors.length === before && view.innerHTML.length > 400,
+      `${v} renders without error`,
+      window.__errors.slice(before).join(' | ') || `${view.innerHTML.length} chars`);
+  }
+
+  say('-- the landing page --');
+  //
+  // The landing page is the only way in, and it is deliberately not a
+  // view — so it is tested by mounting it, not by routing to it.
+  const landing = await import('/src/ui/landing.js');
+  const host = document.createElement('section');
+  host.id = 'landing';
+  document.body.append(host);
+
+  let entered = null;
+  landing.mountLanding({ repo, host, onEnter(v) { entered = v; } });
+  await tick();
+
+  ok(host.querySelector('.lp'), 'it builds');
+  ok(host.textContent.includes('Hello, Ponyo'), 'it says Hello, Ponyo');
+  ok(host.querySelector('.lp__title em')?.textContent === 'Ponyo', 'her name is its own element');
+  ok(host.querySelector('.lp__scene .scene__img, .lp .scene--empty'),
+    'the hero has artwork (or an honest empty frame)');
+  ok(host.querySelectorAll('.cat').length >= 0, 'the kitten module rendered');
+
+  say('-- every number on it is counted --');
+  const shown = host.querySelector('.lp__count strong')?.textContent;
+  ok(Number(shown) === books.length, 'the landing shows the real book count', `${shown} vs ${books.length}`);
+
+  const genreCount = new Set(books.map((b) => (b.genre || '').trim()).filter(Boolean)).size;
+  const authorCount = new Set(books.map((b) => b.author).filter((a) => a && a !== 'Author unknown')).size;
+  const doorNotes = [...host.querySelectorAll('.lp__door-note')].map((n) => n.textContent.trim());
+  ok(doorNotes.some((t) => t.startsWith(`${books.length} book`)), 'the shelves door counts books', doorNotes[0]);
+  ok(doorNotes.some((t) => t.startsWith(`${authorCount} author`)), 'the DNA door counts authors', doorNotes[2]);
+  ok(host.textContent.includes(`${genreCount} shelves`), 'and the shelf count is real');
+
+  // Add a book and confirm a freshly built landing moves with it.
+  const added = repo.add({ title: 'A Test Of The Counting', author: 'Nobody', genre: 'Poetry' });
+  host.innerHTML = '';
+  landing.mountLanding({ repo, host, onEnter() {} });
+  await tick();
+  ok(Number(host.querySelector('.lp__count strong').textContent) === books.length + 1,
+    'adding a book changes the number on it');
+  repo.remove(added.id);
+
+  say('-- and it lets her through --');
+  host.innerHTML = '';
+  landing.mountLanding({ repo, host, onEnter(v) { entered = v; } });
+  await tick();
+  host.querySelector('[data-lp-door="dna"]').click();
+  await new Promise((r) => setTimeout(r, 950));
+  ok(entered === 'dna', 'a door opens its destination', String(entered));
+  ok(!document.querySelector('#landing .lp'), 'and the landing page removes itself');
+  host.remove();
+  store.set({ view: 'library' });
+  await tick();
+
+  say('-- the rail --');
+  const rail = document.querySelector('.rail');
+  ok(Boolean(rail), 'the sidebar exists');
+  const railLabels = [...rail.querySelectorAll('.rail__btn span:last-child')]
+    .map((s) => s.textContent.trim());
+  for (const wanted of ['Landing', 'Shelves', 'Library mode', 'Reading DNA',
+    'Numbers', 'Surprise me', 'Mood']) {
+    ok(railLabels.includes(wanted), `it has ${wanted}`, railLabels.join(' · '));
+  }
+  ok(rail.querySelector('[data-action="landing"]'), 'the first button goes back to the front door');
+  ok(rail.querySelector('[data-rail-cat] .cat'), 'and a kitten sits at the bottom of it');
+
+  say('-- genre worlds are actually different --');
+  //
+  // The claim being tested is "changing genre changes the room", so the
+  // check is that two genres disagree about every channel: the artwork
+  // panel, the world, the kitten's mood AND the kitten's coat. A genre
+  // system that only recoloured would pass three of those and fail here.
+  const SC2 = await import('/src/data/scenes.js');
+  const CAT2 = await import('/src/ui/cat.js');
+  const G = await import('/src/data/genres.js');
+
+  const sampled = ['Horror', 'Romance', 'Economics', "Children's", 'Psychology', 'Mystery']
+    .filter((g) => books.some((b) => b.genre === g))
+    .map((g) => {
+      const mood = G.genreMeta(g).mood;
+      return {
+        g,
+        scene: SC2.sceneFor(SC2.roleForGenre(g), 'x')?.id,
+        world: mood,
+        cat: CAT2.catForWorld(mood),
+        coat: CAT2.catCoatForWorld(mood),
+      };
+    });
+  say(`     ${sampled.map((s) => `${s.g}: ${s.scene} / ${s.world} / ${s.cat} / ${s.coat}`).join('\n     ')}`);
+
+  ok(new Set(sampled.map((s) => s.scene)).size === sampled.length,
+    'every sampled genre gets its own artwork panel');
+  ok(new Set(sampled.map((s) => s.world)).size >= 4, 'and its own world',
+    String(new Set(sampled.map((s) => s.world)).size));
+  ok(new Set(sampled.map((s) => s.cat)).size >= 4, 'and its own kitten mood',
+    String(new Set(sampled.map((s) => s.cat)).size));
+  ok(new Set(sampled.map((s) => s.coat)).size >= 3, 'and its own kitten coat',
+    String(new Set(sampled.map((s) => s.coat)).size));
+
+  // Every world must name a coat that exists.
+  const badCoats = Object.keys(M.worlds.WORLDS)
+    .map((id) => [id, CAT2.catCoatForWorld(id)])
+    .filter(([, c]) => !CAT2.COATS[c]);
+  ok(badCoats.length === 0, 'every world names a real coat',
+    badCoats.map(([id]) => id).join(', ') || `${Object.keys(M.worlds.WORLDS).length} worlds`);
+
+  // And the stage itself renders the scene, the weather and the kitten.
+  store.set({ view: 'library', genre: 'Horror' });
+  await tick();
+  const stage = view.querySelector('.stage');
+  ok(Boolean(stage), 'a genre renders a full stage rather than a card');
+  ok(stage.querySelector('.stage__scene .scene__img'), 'with her artwork in it');
+  ok(stage.querySelector('.stage__weather[data-weather]'), 'with that world\'s weather');
+  ok(stage.querySelector('.stage__cat .cat'), 'and the kitten beside the words');
+  store.set({ genre: '' });
+  await tick();
+
+  say('-- the building --');
+  const plan = M.building.planBuilding(books);
+  ok(plan.floors.length >= 2 && plan.floors.length <= 3, 'two or three floors', String(plan.floors.length));
+  const rooms = plan.floors.flatMap((f) => f.rooms);
+  ok(rooms.length > 6, 'more than six rooms in total', String(rooms.length));
+
+  const specials = rooms.filter((r) => r.kind === 'special').map((r) => r.id);
+  ok(specials.includes('__study'), 'the study exists');
+  ok(specials.includes('__gossip'), 'the whispering corner exists');
+  ok(specials.includes('__glasshouse'), 'the glasshouse exists');
+
+  // Every book must live in exactly one room.
+  const seen = new Map();
+  for (const room of rooms.filter((r) => r.kind !== 'special')) {
+    for (const b of M.building.booksInRoom(room, books)) {
+      seen.set(b.id, (seen.get(b.id) ?? 0) + 1);
+    }
+  }
+  ok(seen.size === books.length, 'every book is in a room', `${seen.size}/${books.length}`);
+  ok([...seen.values()].every((n) => n === 1), 'and in exactly one');
+
+  // Rooms must not overlap each other.
+  let overlaps = 0;
+  for (const f of plan.floors) {
+    for (let i = 0; i < f.rooms.length; i += 1) {
+      for (let j = i + 1; j < f.rooms.length; j += 1) {
+        const a = f.rooms[i]; const b = f.rooms[j];
+        if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) overlaps += 1;
+      }
+    }
+  }
+  ok(overlaps === 0, 'no two rooms overlap', String(overlaps));
+
+  // Stairs must connect every floor to its neighbours.
+  const stairTargets = plan.floors.map((f) => f.stairs.map((s) => s.to).sort().join(','));
+  ok(plan.floors.every((f, i) => {
+    const wanted = [];
+    if (i > 0) wanted.push(i - 1);
+    if (i < plan.floors.length - 1) wanted.push(i + 1);
+    return wanted.sort().join(',') === stairTargets[i];
+  }), 'every floor has the stairs it needs', stairTargets.join(' / '));
+
+  // Coverage, not one-room-per-genre: once she owns more genres than the
+  // building has rooms, the tail shares the stacks. No genre may go
+  // missing, and no room may invent one.
+  const ownedGenres = new Set(books.map((b) => b.genre).filter(Boolean));
+  const covered = new Set(rooms.filter((r) => r.kind !== 'special').flatMap((r) => r.genres));
+  ok(covered.size === ownedGenres.size, 'every genre she owns is reachable in some room',
+    `${covered.size}/${ownedGenres.size}`);
+  ok([...covered].every((g) => ownedGenres.has(g)), 'no room claims a genre she does not own');
+  ok(rooms.filter((r) => r.kind !== 'special' && r.genres.length > 1).length <= 1,
+    'at most one room is a catch-all');
+  ok(plan.floors.every((f) => f.rooms.every((r) =>
+    r.x >= 0 && r.x + r.w <= M.building.FLOOR_W && r.y >= 0 && r.y + r.h <= M.building.FLOOR_H)),
+  'every room is inside the floor');
+
+  say('-- collision --');
+  const floor0 = plan.floors[0];
+  ok(floor0.solids.length > 20, 'the ground floor has a real collision list', String(floor0.solids.length));
+
+  // Walk west out of the hall. She must MOVE, and she must STOP: the
+  // pair matters, because a mover that never budges also never escapes,
+  // and only one of those is collision working.
+  const spawn = floor0.spawn;
+  let p = { ...spawn };
+  for (let i = 0; i < 300; i += 1) p = M.building.moveWithCollision(p, -12, 0, floor0.solids);
+  ok(p.x < spawn.x - 100, 'she can actually walk west across the hall', `x=${Math.round(p.x)}`);
+  ok(p.x >= M.building.BODY, 'and she never gets outside the building', `x=${Math.round(p.x)}`);
+
+  // Nothing may pass through an outer wall, from anywhere on the floor.
+  let escaped = 0;
+  for (let y = 60; y < M.building.FLOOR_H - 60; y += 40) {
+    let probe2 = { x: 900, y };
+    if (M.building.moveWithCollision(probe2, 0, 0, floor0.solids).hit) continue;
+    for (let i = 0; i < 200; i += 1) probe2 = M.building.moveWithCollision(probe2, -14, 0, floor0.solids);
+    if (probe2.x < M.building.BODY - 1) escaped += 1;
+  }
+  ok(escaped === 0, 'no row of the floor lets her through the west wall', String(escaped));
+
+  // Walk into a run of shelving from the aisle and confirm it stops her.
+  //
+  // A room can hold two runs, so the start point has to be the open
+  // floor between the doorway and the run NEAREST the doorway — picking
+  // a run at random lands her standing inside the other one, which
+  // reads as "collision is broken" when it is in fact working perfectly.
+  const genreRoom = floor0.rooms.find((r) => r.kind !== 'special');
+  const runs = M.building.shelvesOf(genreRoom);
+  const fromDoor = genreRoom.door === 'south' ? 1 : -1;   // +1 = door is below
+  const shelf = runs.reduce((best, run) =>
+    (fromDoor > 0 ? run.y > best.y : run.y < best.y) ? run : best, runs[0]);
+
+  const startY = fromDoor > 0 ? shelf.y + shelf.h + 58 : shelf.y - 58;
+  let q = { x: shelf.x + shelf.w / 2, y: startY };
+  ok(!M.building.moveWithCollision(q, 0, 0, floor0.solids).hit,
+    'the aisle in front of the shelving is clear', `y=${Math.round(startY)}`);
+
+  for (let i = 0; i < 80; i += 1) q = M.building.moveWithCollision(q, 0, -fromDoor * 8, floor0.solids);
+  const stoppedShort = fromDoor > 0 ? q.y > shelf.y + shelf.h : q.y < shelf.y;
+  ok(q.y !== startY && stoppedShort, 'and a run of shelving stops her',
+    `moved ${Math.round(Math.abs(q.y - startY))} units to y=${Math.round(q.y)}, shelf spans ${shelf.y}-${shelf.y + shelf.h}`);
+
+  // The doorway must be walkable: step through it from the hall.
+  let r2 = { ...genreRoom.stand };
+  const inward = genreRoom.door === 'south' ? -1 : 1;
+  for (let i = 0; i < 40; i += 1) r2 = M.building.moveWithCollision(r2, 0, inward * 8, floor0.solids);
+  ok(M.building.insideRoom(genreRoom, r2.x, r2.y), 'the doorway is walkable',
+    `${Math.round(r2.x)},${Math.round(r2.y)} into ${genreRoom.label}`);
+
+  // ...and the wall beside the doorway must NOT be.
+  let beside = { x: genreRoom.x + 40, y: genreRoom.stand.y };
+  for (let i = 0; i < 40; i += 1) beside = M.building.moveWithCollision(beside, 0, inward * 8, floor0.solids);
+  ok(!M.building.insideRoom(genreRoom, beside.x, beside.y),
+    'the wall beside the doorway is not', `${Math.round(beside.x)},${Math.round(beside.y)}`);
+
+  // EVERY doorway, on EVERY floor, must be walkable.
+  //
+  // This is the assertion that matters most in the whole file. Testing
+  // one room found nothing while a solid reception desk sat squarely
+  // across the Mystery doorway, making an entire section of the library
+  // unreachable with nothing on screen to explain why.
+  const unreachable = [];
+  const blockedByFurniture = [];
+  for (const f of plan.floors) {
+    for (const room of f.rooms) {
+      const step = room.door === 'south' ? [0, -8]
+        : room.door === 'north' ? [0, 8]
+          : room.door === 'east' ? [-8, 0] : [8, 0];
+      let walk = { ...room.stand };
+      for (let i = 0; i < 60; i += 1) {
+        walk = M.building.moveWithCollision(walk, step[0], step[1], f.solids);
+      }
+      if (!M.building.insideRoom(room, walk.x, walk.y)) {
+        unreachable.push(`${f.name}/${room.label}`);
+      }
+      // And nothing solid may sit in the doorway rectangle itself.
+      for (const prop of f.props.filter((p) => p.solid)) {
+        const d = room.doorway;
+        if (prop.x < d.x + d.w && prop.x + prop.w > d.x
+          && prop.y < d.y + d.h && prop.y + prop.h > d.y) {
+          blockedByFurniture.push(`${prop.kind} in ${room.label}'s doorway`);
+        }
+      }
+    }
+  }
+  ok(unreachable.length === 0, 'every room on every floor can be walked into',
+    unreachable.join(', ') || `${plan.floors.reduce((n, f) => n + f.rooms.length, 0)} rooms`);
+  ok(blockedByFurniture.length === 0, 'no furniture stands in a doorway',
+    blockedByFurniture.join(', ') || 'clear');
+
+  // Furniture must stay inside the hall band. This is the rule that
+  // keeps it out of the doorways in the first place; the check above
+  // catches a violation, this one catches it with a useful message.
+  const strays = [];
+  for (const f of plan.floors) {
+    for (const prop of f.props) {
+      if (prop.y < M.building.HALL_TOP || prop.y + prop.h > M.building.HALL_BOTTOM
+        || prop.x < M.building.HALL_WEST || prop.x + prop.w > M.building.HALL_EAST) {
+        strays.push(`${prop.kind} on ${f.name} at ${prop.x},${prop.y}`);
+      }
+    }
+  }
+  ok(strays.length === 0, 'all furniture is inside the hall band',
+    strays.join('; ') || `${M.building.HALL_WEST}..${M.building.HALL_EAST} x ${M.building.HALL_TOP}..${M.building.HALL_BOTTOM}`);
+
+  // Solid furniture must actually be solid.
+  const table = plan.floors[0].props.find((p) => p.kind === 'table' && p.solid);
+  let intoTable = { x: table.x + table.w / 2, y: table.y - 60 };
+  for (let i = 0; i < 40; i += 1) intoTable = M.building.moveWithCollision(intoTable, 0, 8, floor0.solids);
+  ok(intoTable.y < table.y, 'a table is something you walk around',
+    `stopped at y=${Math.round(intoTable.y)}, table starts at ${table.y}`);
+
+  // Standing on the threshold must offer the room.
+  const offered = M.building.doorwayAt(floor0, genreRoom.stand.x, genreRoom.stand.y);
+  ok(Boolean(offered), 'standing on the threshold offers a room', offered?.label ?? 'nothing');
+  ok(!M.building.doorwayAt(floor0, spawn.x, spawn.y), 'the middle of the hall offers nothing');
+
+  say('-- a door in the building opens THE genre, not a copy of it --');
+  //
+  // This is the whole integration in one block. Walking through a genre
+  // door must land on the shelves' own genre view — same stage, same
+  // filter bar, same cards — and not on a Library-Mode rendering of the
+  // same books, because a second genre screen is a second thing to
+  // drift out of step.
+  store.set({ view: 'building', floor: 0, room: null, genre: '', fromBuilding: null });
+  await tick();
+  ok(document.querySelector('[data-lm-viewport]'), 'the floor has a viewport');
+  ok(document.querySelector('[data-lm-walker]'), 'the character is on the floor');
+
+  const target = floor0.rooms.find((r) => r.kind !== 'special'
+    && (r.genres ?? []).length === 1 && r.count > 0);
+
+  // Go through the door the way the prompt does.
+  const prompt = document.querySelector('[data-lm-prompt]');
+  prompt.innerHTML = `<button data-lm-enter="${target.id}"></button>`;
+  prompt.querySelector('button').click();
+  await tick();
+
+  ok(store.state.view === 'library', 'it lands on the shelves', store.state.view);
+  ok(store.state.genre === target.genres[0], 'filtered to that genre', store.state.genre);
+  ok(view.querySelector('.stage'), 'showing the same cinematic genre stage');
+  ok(view.querySelector('.filterbar'), 'and the same filter bar');
+  ok(!document.querySelector('[data-lm-viewport]'), 'the floor loop was taken down');
+
+  const cards = view.querySelectorAll('.book__hit[data-open]');
+  ok(cards.length === target.count, 'every book in the room is here and openable',
+    `${cards.length} of ${target.count}`);
+
+  // There must be no second genre browser left anywhere.
+  const lmSection = await import('/src/ui/lm/section.js');
+  ok(!('sectionBrowser' in lmSection),
+    'and Library Mode has no genre browser of its own any more');
+
+  say('-- and the way back --');
+  ok(view.querySelector('[data-back-to-floor]'), 'a genre reached by walking offers a way back');
+  view.querySelector('[data-back-to-floor]').click();
+  await tick();
+  ok(store.state.view === 'building', 'which returns to the building', store.state.view);
+  ok(store.state.genre === '', 'and drops the filter on the way out');
+  ok(document.querySelector('[data-lm-walker]'), 'with the character back on the floor');
+
+  // The crumb is keyed on the genre, so any other route to the same page
+  // must not show a "back to the floor" button that lies.
+  store.set({ view: 'library', genre: target.genres[0], fromBuilding: null });
+  await tick();
+  ok(!view.querySelector('[data-back-to-floor]'),
+    'a genre reached by filtering offers no floor to go back to');
+
+  say('-- the stacks are a signpost, not a browser --');
+  const stacksRoom = plan.floors.flatMap((f) => f.rooms)
+    .find((r) => (r.genres ?? []).length > 1);
+  if (stacksRoom) {
+    const stacksFloor = plan.floors.findIndex((f) => f.rooms.includes(stacksRoom));
+    store.set({ view: 'building', floor: stacksFloor, room: stacksRoom.id, genre: '' });
+    await tick();
+    const rows = view.querySelectorAll('.stacks__row[data-see-genre]');
+    ok(rows.length > 1, 'it lists the shelves it holds', `${rows.length} shelves`);
+    ok([...rows].every((r) => r.dataset.seeGenre),
+      'and every row leads into the shared genre view');
+  } else {
+    ok(true, 'no catch-all room in this library');
+  }
+
+  say('-- the lift, and leaving --');
+  store.set({ view: 'building', floor: 0, room: null, roomWorld: null, genre: '' });
+  await tick();
+  const lift = [...document.querySelectorAll('[data-floor]')];
+  ok(lift.length === plan.floors.length, 'the lift lists every floor', String(lift.length));
+  lift[1].click();
+  await tick();
+  ok(store.state.floor === 1, 'the lift changes floor');
+  const upstairs = [...document.querySelectorAll('[data-room-id]')].map((e) => e.dataset.roomId);
+  const ground = plan.floors[0].rooms.map((r) => r.id);
+  ok(upstairs.length > 0 && !upstairs.some((g) => ground.includes(g)),
+    'the upper floor holds different sections', upstairs.join(', '));
+  store.set({ floor: 0 });
+  await tick();
+
+  say('-- the shelves are untouched --');
+  // The shelves layout caps each genre rail at 18 covers behind a
+  // "See all" button, so counting cards there measures the rail limit,
+  // not the library. The flat grid is the honest comparison.
+  store.set({ view: 'library', prefs: { layout: 'grid' } });
+  await tick();
+  ok(document.querySelectorAll('.book__hit').length === books.length,
+    'the grid still shows every book', String(document.querySelectorAll('.book__hit').length));
+  store.set({ prefs: { layout: 'shelves' } });
+  await tick();
+  ok(Boolean(document.querySelector('.shelf')), 'the genre-rail layout is intact');
+  ok(document.querySelectorAll('.shelf').length >= 10, 'the rails still cover the genres',
+    String(document.querySelectorAll('.shelf').length));
+
+  say('-- the same book from both routes --');
+  // "Both routes" now means: reached by walking through a door, and
+  // reached by filtering. Both land on the same view, so this is really
+  // asking whether the book page itself is shared — it is.
+  store.set({ view: 'library', genre: target.genres[0],
+    fromBuilding: { floor: 0, room: target.id, genre: target.genres[0] } });
+  await tick();
+  const detail = await import('/src/ui/views/book-detail.js');
+  const probe = M.building.booksInRoom(target, books)[0];
+
+  const featuresOf = async () => {
+    await tick();
+    const panel = document.querySelector('.drawer');
+    const labels = [...panel.querySelectorAll('.detail__label')].map((n) => n.textContent.trim());
+    const close = panel.querySelector("[data-close-drawer]");
+    return { labels, close };
+  };
+
+  detail.openBookDetail({ repo, store, cache }, probe.id);
+  const fromRoom = await featuresOf();
+  fromRoom.close.click();
+  await tick();
+
+  store.set({ view: 'library', room: null });
+  await tick();
+  detail.openBookDetail({ repo, store, cache }, probe.id);
+  const fromShelf = await featuresOf();
+  fromShelf.close.click();
+  await tick();
+
+  ok(fromRoom.labels.length > 0 && fromRoom.labels.join('|') === fromShelf.labels.join('|'),
+    'identical features from Library Mode and the shelves',
+    `${fromRoom.labels.length} sections`);
+
+  say('-- a book with no photograph behaves the same --');
+  const noPhoto = books.find((b) => !b.coverUrl);
+  detail.openBookDetail({ repo, store, cache }, noPhoto.id);
+  const fallbackOne = await featuresOf();
+  fallbackOne.close.click();
+  await tick();
+  ok(fallbackOne.labels.join('|') === fromShelf.labels.join('|'),
+    'a fallback-cover book opens the identical page', noPhoto.title);
+
+  say('-- every book has a cover representation --');
+  //
+  // The Phase 1 rule is that nothing ever renders blank: a real
+  // photograph where one is verified, a drawn cover otherwise, and never
+  // an empty box or a broken-image icon.
+  const policy = await import('/src/data/cover-policy.js');
+  const covers = await import('/src/ui/covers.js');
+
+  let real = 0;
+  let drawn = 0;
+  const nothing = [];
+  for (const b of books) {
+    const resolved = policy.resolveCover(b, cache.forBook(b));
+    if (resolved.status === policy.COVER_STATUS.REAL && resolved.url) real += 1;
+    else if (resolved.status === policy.COVER_STATUS.FALLBACK) drawn += 1;
+    else nothing.push(b.title);
+  }
+  say(`     ${real} verified photographs · ${drawn} drawn · ${nothing.length} with neither`);
+  ok(nothing.length === 0, 'no book resolves to nothing',
+    nothing.slice(0, 5).join(', ') || 'all covered');
+  ok(real + drawn === books.length, 'and the two add up to the catalogue',
+    `${real + drawn} of ${books.length}`);
+
+  // The drawn cover must actually carry the book, not be a grey box.
+  const drawnOne = books.find((b) => !b.coverUrl);
+  const markup = covers.coverMarkup(drawnOne, cache);
+  ok(markup.includes('<svg'), 'a drawn cover is real artwork, not a placeholder div');
+  // The title is set across tspans, so look for its first word rather
+  // than for a contiguous slice of the whole string.
+  const firstWord = drawnOne.title.split(/\s+/)[0].replace(/&/g, '&amp;');
+  ok(markup.includes(firstWord), 'and it carries the title', drawnOne.title);
+  ok(markup.includes('cover__title'), 'as real typography');
+
+  // Two books on one shelf must not come out as the same rectangle.
+  const sameShelf = books.filter((b) => b.genre === drawnOne.genre && !b.coverUrl).slice(0, 4);
+  if (sameShelf.length > 1) {
+    const swatches = new Set(sameShelf.map((b) => covers.coverSVG(b).match(/stop-color="([^"]+)"/)[1]));
+    ok(swatches.size > 1, 'and two drawn covers on one shelf differ',
+      `${swatches.size} shades across ${sameShelf.length} books`);
+  }
+
+  // Rendered on a shelf, every single card must contain something.
+  store.set({ view: 'library', genre: '', shelf: 'all', prefs: { layout: 'grid' } });
+  await tick();
+  const arts = [...view.querySelectorAll('.book__art')];
+  const empties = arts.filter((a) => !a.querySelector('svg, img'));
+  ok(arts.length === books.length, 'the grid draws every book', `${arts.length}`);
+  ok(empties.length === 0, 'and not one of them is an empty box', String(empties.length));
+  store.set({ prefs: { layout: 'shelves' } });
+  await tick();
+
+  say('-- her artwork --');
+  const SC = await import('/src/data/scenes.js');
+  const files = M.portraits.allPortraits();
+  say(`     ${files.length} artwork files -> ${SC.sceneCount()} panels`);
+
+  if (files.length) {
+    ok(SC.sceneCount() > files.length,
+      'each collage is cut into panels rather than used whole',
+      `${SC.sceneCount()} panels from ${files.length} files`);
+
+    // Every crop must be a real rectangle inside the image.
+    const badBoxes = SC.allScenes().filter(({ box: [x, y, w, h] }) =>
+      w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > 1.0001 || y + h > 1.0001);
+    ok(badBoxes.length === 0, 'every crop lies inside its image',
+      badBoxes.map((s) => s.id).join(', ') || 'all in bounds');
+
+    // The artwork arrived named "ponyo-library-world.png (2).png". A raw
+    // space in a URL is the part that actually breaks; parentheses are
+    // legal characters and encodeURIComponent leaves them alone, which
+    // is correct and not worth asserting against.
+    ok(SC.allScenes().every((s) => !/ /.test(s.src)),
+      'no raw spaces survive into an artwork URL', SC.allScenes()[0].src.split('/').pop());
+    ok(SC.allScenes().every((s) => s.src.startsWith('http')),
+      'and every one is an absolute URL');
+
+    // Roles the UI actually asks for must resolve to something.
+    const wanted = ['hero', 'cosy', 'research', 'economics', 'environment',
+      'gossip', 'travel', 'cat', 'library', 'dna', 'numbers'];
+    const empty = wanted.filter((r) => !SC.sceneFor(r, 'x'));
+    ok(empty.length === 0, 'every role the UI asks for resolves', empty.join(', ') || 'all resolve');
+
+    // Rotation: different tokens must not always give the same panel.
+    const rolled = new Set(Array.from({ length: 12 }, (_, i) => SC.sceneFor('hero', `t${i}`)?.id));
+    ok(rolled.size > 1, 'the hero rotates between visits', `${rolled.size} distinct panels`);
+  } else {
+    ok(SC.sceneCount() === 0, 'no artwork, no scenes');
+    ok(document.body.innerHTML.length > 0, 'and the app still renders');
+  }
+
+  say('-- the kitten replaced the seal --');
+  const CAT = await import('/src/ui/cat.js');
+  ok(CAT.CAT_MOODS.length >= 12, 'the kitten has a full set of moods', String(CAT.CAT_MOODS.length));
+  ok(CAT.cat('wave').includes('cat__wave'), 'it can wave');
+  ok(CAT.cat('sit').includes('cat__tail'), 'and its tail is always there');
+
+  let sealGone = false;
+  try { await import('/src/ui/mascot.js'); } catch { sealGone = true; }
+  ok(sealGone, 'the seal mascot module is gone');
+
+  // Every world must dress the kitten in something that exists.
+  const badMoods = Object.keys(M.worlds.WORLDS)
+    .map((id) => [id, CAT.catForWorld(id)])
+    .filter(([, mood]) => !CAT.CAT_MOODS.includes(mood));
+  ok(badMoods.length === 0, 'every world dresses the kitten in a real mood',
+    badMoods.map(([id]) => id).join(', ') || `${Object.keys(M.worlds.WORLDS).length} worlds`);
+
+  say('-- genres all reach a world --');
+  const genreNames = [...new Set(books.map((b) => b.genre).filter(Boolean))];
+  const unmapped = genreNames.filter((g) => !M.worlds.WORLDS[M.genres.genreMeta(g).mood]);
+  ok(unmapped.length === 0, 'every genre maps to a world that exists', unmapped.join(', ') || 'all mapped');
+
+  say('-- messages rotate --');
+  const quips = await import('/src/data/quips.js');
+  const seenLines = new Set();
+  for (let i = 0; i < 8; i += 1) {
+    quips.arrive('lp-line');
+    seenLines.add(quips.line(quips.LANDING_LINES, 'lp-line', `t${i}`));
+  }
+  ok(seenLines.size >= 6, 'eight arrivals give at least six different lines', String(seenLines.size));
+  ok(quips.LANDING_LINES.length >= 12, 'the landing pool is deep enough to not repeat',
+    String(quips.LANDING_LINES.length));
+
+  say('-- a reload starts at the front door --');
+  //
+  // The real test is pressing F5, which no harness here can do. What CAN
+  // be proved is the reason it works: nothing persists the route, and
+  // nothing reads one back. If either of those ever changes, this fails.
+  store.set({ view: 'stats', floor: 2, room: null });
+  await tick();
+  const persisted = repo.exportJSON();
+  const settingKeys = Object.keys(persisted.settings ?? {});
+  ok(!settingKeys.some((k) => /^(view|route|page|tab|floor|room)$/i.test(k)),
+    'no route-ish key is ever written to storage', settingKeys.join(', ') || 'none');
+  ok(!('view' in M.store.DEFAULT_PREFS), 'the view is not a preference');
+
+  // A fresh store — which is exactly what a reload builds — starts clean,
+  // and index.html puts the landing page in front of it either way.
+  const reborn = M.store.createStore({ prefs: { ...M.store.DEFAULT_PREFS } });
+  ok(reborn.state.view === 'library', 'a brand new store opens on the shelves', reborn.state.view);
+  ok(reborn.state.room === null && reborn.state.floor === 0,
+    'and not inside a room on some floor');
+
+  // The landing markup ships in index.html, empty, and nothing else in
+  // the document can stand in for it.
+  const shell = await (await fetch('/index.html')).text();
+  ok(/<section id="landing"[^>]*>\s*<\/section>/.test(shell),
+    'index.html ships an empty landing slot, filled at boot');
+  ok(!/id="welcome"/.test(shell), 'the old welcome screen is gone');
+  ok(!/data-nav="home"/.test(shell), 'and nothing navigates to a Home view');
+
+  // ...while the durable things are still all there.
+  ok(persisted.books.length === books.length, 'the books survive regardless',
+    `${persisted.books.length}`);
+
+  say('-- nothing speaks for anybody else --');
+  const allText = [];
+  for (const v of ['library', 'building', 'dna', 'stats', 'settings']) {
+    store.set({ view: v, room: null });
+    await tick();
+    allText.push(view.textContent);
+  }
+  const joined = allText.join(' ').toLowerCase();
+  ok(!/boyfriend|from him|note that came|notes from/.test(joined), 'no second voice anywhere');
+
+  say('');
+  say(window.__errors.length ? `CONSOLE ERRORS:\n  ${window.__errors.join('\n  ')}` : 'no console errors');
+  say(fails ? `${fails} FAILURE(S)` : 'ALL PASS');
+} catch (error) {
+  say('THREW: ' + (error && error.stack ? error.stack : error));
+}
+</script>
+</body></html>

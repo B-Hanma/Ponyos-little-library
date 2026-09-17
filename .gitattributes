@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────
+#  Ponyo's Little Library — line endings and file types
+#
+#  This project is written on Windows and will be developed and run on
+#  macOS (Phase 2 targets her Mac first). Without this file Git decides
+#  line endings by guesswork per machine, and the first cross-platform
+#  edit shows up as "every line changed" in a diff — which buries the
+#  one line that actually changed.
+#
+#  The rule is the conventional one: LF in the repository, always;
+#  whatever the platform needs in the working tree. Because there are no
+#  commits yet, this takes effect cleanly with nothing to renormalise.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# ── DEFAULT ──────────────────────────────────────────────────────────
+# Normalise anything Git detects as text to LF on the way in. Files it
+# detects as binary are left exactly as they are.
+* text=auto eol=lf
+
+
+# ── APPLICATION SOURCE — LF ──────────────────────────────────────────
+# The app itself: ES modules, stylesheets, markup, data.
+*.js      text eol=lf
+*.mjs     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
+*.json    text eol=lf
+*.svg     text eol=lf
+*.md      text eol=lf
+*.txt     text eol=lf
+
+# Phase 2 additions, so the rule is already here when they arrive.
+*.rs      text eol=lf
+*.toml    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+
+# Repository metadata.
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+
+# ── WINDOWS SCRIPTS — CRLF, DELIBERATELY ─────────────────────────────
+# These are the exception, and it is not cosmetic.
+#
+# A .bat file is read by cmd.exe line by line as it executes. With LF
+# endings, labels and `goto` can mis-parse and the failure is confusing
+# rather than loud. start-library.bat must stay CRLF.
+#
+# The .ps1 tooling is Windows-only by nature (System.Net.HttpListener,
+# headless Edge) and CRLF is the platform convention for it. This also
+# keeps them consistent with the ASCII-only, BOM-sensitive parsing that
+# Windows PowerShell 5.1 already forced on this project.
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+*.psm1    text eol=crlf
+*.psd1    text eol=crlf
+
+
+# ── HER ARTWORK AND ALL BINARIES — HANDS OFF ─────────────────────────
+# `binary` is shorthand for `-text -diff -merge`: Git will never apply
+# line-ending conversion, never try to produce a textual diff, and never
+# attempt a line-level merge.
+#
+# `* text=auto` above would almost certainly classify these correctly on
+# its own. They are listed explicitly anyway, because "do not modify the
+# artwork" is a standing rule of this project and it should be written
+# down where Git can enforce it rather than left to detection.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.avif    binary
+*.ico     binary
+*.pdf     binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.mp3     binary
+*.mp4     binary
+*.zip     binary
+
+# Phase 2 library backups. Ignored by .gitignore and must never be
+# committed — but if one is ever force-added for a good reason, it is a
+# zip of her library and must arrive byte-for-byte intact.
+*.ponyolib binary
+
+
+# ── LARGE ARTWORK: A NOTE, NOT A RULE ────────────────────────────────
+# There is deliberately no `assets/ponyo/** binary` line here.
+#
+# A folder-wide pattern would win over the extension rules above — in
+# .gitattributes the last match wins — and it would catch manifest.json
+# and README.txt in that folder too, marking two genuinely useful text
+# files as binary and throwing their diffs away. The `*.png binary` rule
+# above already covers the artwork itself.
+#
+# This is also where a Git LFS rule would go, if that decision lands
+# that way later. No LFS is configured now.

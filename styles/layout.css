@@ -1,0 +1,292 @@
+/* layout.css — the app shell: top bar, main column, mobile tab bar.
+
+   The welcome screen that used to live at the top of this file is gone.
+   The front door is now styles/landing.css, built by src/ui/landing.js —
+   see "Addendum 5" in ARCHITECTURE.md for why it is not a route. */
+
+/* ==========================================================
+   APP SHELL
+   ========================================================== */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  animation: app-in 900ms var(--ease-out);
+}
+.app[hidden] { display: none; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  border-bottom: 1px solid var(--border-soft);
+  transition: background-color var(--t-mood) var(--ease-soft),
+              border-color var(--t-mood) var(--ease-soft);
+}
+
+.topbar__row {
+  max-width: var(--shell);
+  margin: 0 auto;
+  min-height: var(--topbar-h);
+  padding: var(--sp-3) var(--sp-5);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-shrink: 0;
+  border-radius: var(--r-md);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1) 0;
+}
+.brand__mark { color: var(--accent-2); flex-shrink: 0; transition: transform var(--t-mid) var(--ease-out); }
+.brand__mark .mk-book { stroke: var(--accent); stroke-width: 3; }
+.brand:hover .brand__mark { transform: rotate(-6deg) scale(1.06); }
+.brand__text { display: grid; text-align: left; line-height: 1.1; }
+.brand__name { font-family: var(--font-display); font-size: var(--step-1); font-weight: 600; }
+.brand__sub {
+  font-size: var(--step--2);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+
+.search {
+  position: relative;
+  flex: 1 1 auto;
+  max-width: 30rem;
+  margin-inline: auto;
+}
+.search__icon {
+  position: absolute;
+  left: var(--sp-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-mute);
+  pointer-events: none;
+}
+.search__input {
+  width: 100%;
+  padding: .62rem .62rem .62rem 2.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: var(--step--1);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast), background-color var(--t-fast);
+}
+.search__input::placeholder { color: var(--text-mute); }
+.search__input:hover { border-color: var(--border); background: var(--surface-2); }
+.search__input:focus {
+  border-color: var(--accent-line);
+  background: var(--surface-2);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.search__input::-webkit-search-cancel-button { display: none; }
+.search__clear {
+  position: absolute;
+  right: var(--sp-2); top: 50%;
+  transform: translateY(-50%);
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 1.15rem;
+  line-height: 1;
+  display: grid; place-items: center;
+}
+.search__clear:hover { background: var(--surface-3); color: var(--text); }
+
+.topnav { display: flex; align-items: center; gap: var(--sp-1); flex-shrink: 0; }
+.topnav__btn {
+  padding: .5rem .8rem;
+  border-radius: var(--r-pill);
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  transition: color var(--t-fast), background-color var(--t-fast);
+}
+.topnav__btn:hover { color: var(--text); background: var(--surface-2); }
+.topnav__btn.is-active { color: var(--accent-text); background: var(--accent-soft); }
+
+.btn--add { flex-shrink: 0; }
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-5) var(--sp-8);
+}
+.main:focus { outline: none; }
+
+/* ==========================================================
+   MOBILE TAB BAR
+   ========================================================== */
+
+.tabbar { display: none; }
+
+/*
+  Where the desktop row gives up and the tab bar takes over.
+
+  This used to be 860px, which was true when the top row held four
+  destinations. It now holds six, plus the brand, the search field,
+  Surprise me and Add a book — and between 861px and about 1000px that
+  row was ~180px wider than the window, pushing "Add a book" off the
+  right-hand edge of the page. A tablet is not a small desktop; it gets
+  the tab bar, which is a better answer at that size anyway.
+*/
+@media (max-width: 1024px) {
+  :root { --topbar-h: 58px; }
+
+  .topbar__row {
+    padding: var(--sp-3) var(--sp-4);
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+  }
+  .brand__sub { display: none; }
+  /* Scoped to .topbar so this wins over the .btn display rule in
+     components.css, which is loaded later. */
+  .topbar .topnav,
+  .topbar .btn--add { display: none; }
+  .search { max-width: none; order: 3; flex-basis: 100%; margin: 0; }
+
+  .main { padding: var(--sp-5) var(--sp-4) calc(var(--tabbar-h) + var(--sp-8)); }
+
+  .tabbar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 45;
+    display: grid;
+    /* Auto columns, not a fixed count. The fixed `repeat(5, 1fr)` this
+       replaces silently wrapped the sixth button onto a second row that
+       the bar is not tall enough to show, so one destination was simply
+       missing on a phone. Now the bar fits however many buttons exist. */
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    align-items: center;
+    height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: color-mix(in oklab, var(--bg) 88%, transparent);
+    backdrop-filter: blur(18px) saturate(1.3);
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    border-top: 1px solid var(--border-soft);
+  }
+  .tabbar__btn {
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    padding: var(--sp-2) 0;
+    font-size: 10px;
+    letter-spacing: .04em;
+    color: var(--text-mute);
+    transition: color var(--t-fast);
+  }
+  .tabbar__btn.is-active { color: var(--accent-text); }
+  .tabbar__btn.is-active svg { filter: drop-shadow(0 0 8px var(--accent-soft)); }
+
+  .tabbar__btn--fab {
+    justify-self: center;
+    width: 50px; height: 50px;
+    margin-top: -18px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    box-shadow: 0 8px 22px -6px var(--accent-line), var(--shadow-2);
+    place-content: center;
+  }
+  .tabbar__btn--fab svg { stroke-width: 2.4; }
+  .tabbar__btn--fab:active { transform: scale(.93); }
+}
+
+/* ==========================================================
+   THE RAIL — her library's spine.
+
+   A vertical nav on desktop, standing in for the old top-row
+   links. Deliberately not an admin sidebar: icon over label,
+   generous spacing, a handwritten note at the bottom and a
+   kitten sitting on it.
+
+   On touch sizes it disappears entirely and the tab bar takes
+   over — the same breakpoint that hides the top-row links.
+   ========================================================== */
+
+.rail {
+  position: fixed;
+  left: 0; top: 0; bottom: 0;
+  z-index: 44;
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: calc(var(--topbar-h) + var(--sp-3)) var(--sp-2) var(--sp-4);
+  background: color-mix(in oklab, var(--bg-deep, var(--bg)) 86%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-right: 1px solid var(--border-soft);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar { display: none; }
+
+.rail__btn {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: var(--sp-3) var(--sp-1);
+  border-radius: var(--r-md);
+  color: var(--text-mute);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  line-height: 1.25;
+  text-align: center;
+  transition: color var(--t-fast), background-color var(--t-fast);
+}
+.rail__btn:hover { color: var(--text); background: var(--surface-2); }
+.rail__btn.is-active { color: var(--accent-text); background: var(--accent-soft); }
+.rail__btn.is-active svg { filter: drop-shadow(0 0 8px var(--accent-soft)); }
+.rail__btn--home { color: var(--accent-text); }
+
+.rail__rule {
+  height: 1px;
+  margin: var(--sp-2) var(--sp-3);
+  background: var(--border-soft);
+  flex-shrink: 0;
+}
+
+.rail__foot {
+  margin-top: auto;
+  padding-top: var(--sp-4);
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-1);
+}
+.rail__cat { display: block; }
+.rail__note {
+  font-family: var(--font-hand);
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-mute);
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* The rest of the app moves over to make room. */
+@media (min-width: 1025px) {
+  :root { --rail-w: 86px; }
+  .app { padding-left: var(--rail-w); }
+  .topbar { padding-left: 0; }
+}
+@media (max-width: 1024px) {
+  :root { --rail-w: 0px; }
+  .rail { display: none; }
+}

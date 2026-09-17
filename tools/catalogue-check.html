@@ -1,0 +1,78 @@
+<!doctype html><html><head><meta charset="utf-8"><title>catalogue check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script type="module">
+/**
+ * catalogue-check.html — does the catalogue match the source list?
+ *
+ * The 208-row collection list is transcribed below exactly as given,
+ * including the two rows that are repeats. This page compares it against
+ * what catalogue.js actually exports and reports anything missing,
+ * anything extra, and anything duplicated.
+ *
+ * Run it with: .\tools\run-checks.ps1 -Harness tools/catalogue-check.html
+ */
+const out = document.getElementById('out');
+const say = (s) => { out.textContent += s + '\n'; };
+
+const SOURCE = `Salvation of a Saint|Poor Economics|A Little Life|What the Dog Saw|Welcome to the Hyunam-Dong Bookshop|Curation|The Ocean of Churn|Katabasis|Babel|The People on Platform 5|Project Hail Mary|1984|The God of Small Things|Girl, Woman, Other|The Spy|23 Things They Don't Tell You About Capitalism|The Haunting of Hill House|Almond|Fluid|Breakout Nations|There Are Rivers in the Sky|The Art of Thinking Clearly|The Social Animal|The Elephant Paradigm|Murder in the Family|Animal Farm|Chokher Bali|Ghachar Ghochar|Diary of a Void|The Book Thief|The Testaments|And the Mountains Echoed|The Namesake|I'll Give You the Sun|Pachinko|Acts of God|A Thousand Splendid Suns|The Difficulty of Being Good|Factfulness|Indianomix|A World of Three Zeroes|To Kill a Mockingbird|As Long as the Lemon Trees Grow|Burnt Shadows|The Bastard of Istanbul|Wuthering Heights|Down and Out in Paris and London|Strange Houses|The Handmaid's Tale|Beautiful World, Where Are You|Human Acts|Cleopatra and Frankenstein|Butter|Tomorrow, and Tomorrow, and Tomorrow|The Kite Runner|Martyr!|Intermezzo|Diary of a Wimpy Kid|Diary of a Wimpy Kid: Rodrick Rules|Diary of a Wimpy Kid: The Last Straw|Diary of a Wimpy Kid: Dog Days|Diary of a Wimpy Kid: The Ugly Truth|Diary of a Wimpy Kid: Cabin Fever|Diary of a Wimpy Kid: The Third Wheel|Diary of a Wimpy Kid: Hard Luck|Diary of a Wimpy Kid: The Long Haul|Diary of a Wimpy Kid: Old School|Diary of a Wimpy Kid: Double Down|Diary of a Wimpy Kid: The Getaway|Diary of a Wimpy Kid: The Meltdown|Diary of a Wimpy Kid: Hot Mess|One Flew Over the Cuckoo's Nest|Exit West|Oliver Twist|Go Kiss the World|Chanakya's Chant|The Diary of a Young Girl|Norwegian Wood|Pride and Prejudice|The Silent Patient|The Alchemist|Before the Coffee Gets Cold|Fooled by Randomness|In the City by the Sea|Barking Up the Wrong Tree|The Sialkot Saga|Business Sutra|Dork Diaries|Tuesdays with Morrie|Shopaholic Abroad|Thomas Titans: Men Among Boys|Crystal|The Other Woman|2 States|The Subtle Art of Not Giving a F*ck|The Success Sutra|The Gene|Die Trying|Menaka's Choice|Originals|Sita's Sister|The Fault in Our Stars|Where She Went|If God Was a Banker|Kafka on the Shore|Five Go to Smuggler's Top|Five Go Off in a Caravan|Five on Kirrin Island Again|Spicy Bites of Biryani|Revolution 2020|Tales from the Arabian Nights|Can You Keep a Secret?|The Secret Dreamworld of a Shopaholic|Peril at End House|The Longest Ride|The Great Gatsby|The Mahabharata Secret|Social Intelligence|Karna's Wife: The Outcast's Queen|Gone Tomorrow|Killing Floor|Make Me|The World Is Flat|The Host|Maximum City|Sophie's World|The Krishna Key|The Perks of Being a Wallflower|Our Impossible Love|Working with Emotional Intelligence|Confronting Reality|The Misadventures of Max Crumbly|Sweet Revenge|Two of a Kind Diaries|Discussions on Youth|Collected Works of Kahlil Gibran|Who Says Elephants Can't Dance?|The Da Vinci Code|The Executors|Beyond 2020: A Vision for Tomorrow's India|The Rise and Fall of Nations|The New Emerging Market Multinationals|Dictionary of Business|Super Economies|Rebooting India|Thinking, Fast and Slow|Execution|A Wanted Man|Mossad|Frugal Innovation|The Art of the Good Life|PS, I Love You|The Stockmen|Black Wind|Gweilo: Memories of a Hong Kong Childhood|The Blood-Dimmed Tide|Great by Choice|Risk/Reward|The Power of Your Subconscious Mind|Orbit Shifting Innovation|Steve Jobs|Thank You for Being Late|Fifty Things That Made the Modern Economy|Entrepreneurship in the 21st Century|India Unbound|Guaranteed to Fail|The 5 AM Club|Stay Hungry Stay Foolish|Focus|Five on a Hike Together|Good Work, Secret Seven|Zombie School|Scary Birthday to You!|Mardi Gras Masquerade|The Crooked Banister|Two of a Kind Diaries|Mystery on Maui|Escape from Java and Other Tales of Danger|The Evolution of Everything|Homo Deus: A Brief History of Tomorrow|Alice in Wonderland|Think and Grow Rich|The Concise Laws of Power|Losing My Virginity|My Hanuman Chalisa|The Wealth of Nations|Tripwire|Night School|The Art of Thinking Clearly|Inside the Nudge Unit|Turning Points|Corporate Chanakya|Imagining India|Hot, Flat, and Crowded|The Magic of Thinking Big|It Happened in India|A Brief History of Time|Predictably Irrational|Lateral Thinking|I Have a Dream|Jugaad|You're Plant Food|Checkout Time at the Dead-End Hotel|Welcome to the Wicked Wax Museum|Four Sherlock Holmes Mysteries|The Invisible Man|Funny Side Up|Charlie and the Chocolate Factory`
+  .split('|').map((s) => s.trim()).filter(Boolean);
+
+try {
+  const { CATALOGUE, CATALOGUE_PARTS } = await import('/src/data/catalogue.js');
+  const { cleanRows } = await import('/src/data/corrections.js');
+
+  // Combining marks written as escapes on purpose: a literal range of
+  // invisible characters in a source file is a trap for the next editor.
+  const norm = (s) => s.toLowerCase().normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[‘’']/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  say(`SOURCE rows: ${SOURCE.length}`);
+  const sourceUnique = new Set(SOURCE.map(norm));
+  say(`SOURCE unique titles: ${sourceUnique.size}   (repeats: ${SOURCE.length - sourceUnique.size})`);
+  say('');
+  for (const [name, part] of Object.entries(CATALOGUE_PARTS)) say(`  part ${name.padEnd(12)} ${part.length}`);
+  say(`CATALOGUE total: ${CATALOGUE.length}`);
+  say(`after cleanRows: ${cleanRows(CATALOGUE).length}`);
+  say('');
+
+  const have = new Map();
+  for (const b of CATALOGUE) {
+    const k = norm(b.title);
+    have.set(k, (have.get(k) ?? 0) + 1);
+  }
+
+  const missing = [...sourceUnique].filter((k) => !have.has(k));
+  const extra = [...have.keys()].filter((k) => !sourceUnique.has(k));
+  const dupes = [...have.entries()].filter(([, n]) => n > 1);
+
+  say(`MISSING from the catalogue: ${missing.length}`);
+  missing.forEach((k) => say('   - ' + SOURCE.find((s) => norm(s) === k)));
+  say(`EXTRA (not in the source list): ${extra.length}`);
+  extra.forEach((k) => say('   + ' + CATALOGUE.find((b) => norm(b.title) === k).title));
+  say(`DUPLICATED inside the catalogue: ${dupes.length}`);
+  dupes.forEach(([k, n]) => say(`   x ${CATALOGUE.find((b) => norm(b.title) === k).title}  (${n})`));
+
+  say('');
+  const noDesc = CATALOGUE.filter((b) => !b.description || b.description.length < 60);
+  say(`books with no real description: ${noDesc.length}`);
+  noDesc.slice(0, 20).forEach((b) => say('   ! ' + b.title));
+  const noGenre = CATALOGUE.filter((b) => !b.genre);
+  say(`books with no genre: ${noGenre.length}`);
+  noGenre.slice(0, 20).forEach((b) => say('   ! ' + b.title));
+  const flagged = CATALOGUE.filter((b) => b.needsReview);
+  say(`flagged needsReview: ${flagged.length}`);
+  flagged.forEach((b) => say('   ? ' + b.title));
+
+  const genres = {};
+  for (const b of CATALOGUE) genres[b.genre] = (genres[b.genre] ?? 0) + 1;
+  say('');
+  say('genres: ' + Object.entries(genres).sort((a, b) => b[1] - a[1])
+    .map(([g, n]) => `${g}=${n}`).join('  '));
+} catch (e) {
+  say('THREW: ' + (e && e.stack ? e.stack : e));
+}
+say('<<END>>');
+</script></body></html>

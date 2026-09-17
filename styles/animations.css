@@ -1,0 +1,197 @@
+/* animations.css — every keyframe, plus the reduced-motion contract */
+
+@keyframes fade-in   { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fade-out  { to { opacity: 0 } }
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes app-in {
+  from { opacity: 0; transform: scale(1.015); filter: blur(6px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(9vw, 7vh, 0) scale(1.14); }
+}
+@keyframes drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(-8vw, -6vh, 0) scale(1); }
+}
+
+@keyframes float-up {
+  0%   { transform: translateY(0) translateX(0) scale(.6); opacity: 0; }
+  12%  { opacity: .75; }
+  85%  { opacity: .5; }
+  100% { transform: translateY(-112vh) translateX(var(--drift, 20px)) scale(1); opacity: 0; }
+}
+
+/* the ripple the Enter button leaves behind */
+@keyframes ripple-out {
+  from { transform: translate(-50%, -50%) scale(0); opacity: .55; }
+  to   { transform: translate(-50%, -50%) scale(46); opacity: 0; }
+}
+
+@keyframes drawer-in  { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes drawer-out { to { transform: translateX(100%); } }
+@keyframes sheet-in   { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sheet-out  { to { transform: translateY(100%); } }
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(18px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes modal-out { to { opacity: 0; transform: translateY(10px) scale(.98); } }
+
+@keyframes toast-in  { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+
+@keyframes heart-pop {
+  0%   { transform: scale(1); }
+  38%  { transform: scale(1.42); }
+  70%  { transform: scale(.92); }
+  100% { transform: scale(1); }
+}
+
+@keyframes seal-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 6px 18px -6px var(--accent-line); }
+  50%      { transform: scale(1.06); box-shadow: 0 10px 26px -6px var(--accent); }
+}
+
+@keyframes bar-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+@keyframes pulse-soft { 0%, 100% { opacity: .5 } 50% { opacity: 1 } }
+
+/* ==========================================================
+   REDUCED MOTION
+   Two paths in: the OS preference, and her own toggle in
+   Settings (which sets data-motion="off" on <html>).
+   Both land here so there is exactly one place to reason about.
+   ========================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-delay: -1ms !important;      /* never hold content at the from-state */
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+[data-motion="off"] *,
+[data-motion="off"] *::before,
+[data-motion="off"] *::after {
+  animation-duration: .01ms !important;
+  animation-delay: -1ms !important;        /* never hold content at the from-state */
+  animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important;
+}
+
+/* Ambient drift and bubbles are decoration only: kill them outright
+   rather than running them at 0.01ms forever. */
+@media (prefers-reduced-motion: reduce) {
+  .ambient__glow, .sea, .bubble, .letter__seal, .welcome__seal { animation: none !important; }
+  .welcome__bubbles { display: none; }
+}
+[data-motion="off"] .ambient__glow,
+[data-motion="off"] .sea,
+[data-motion="off"] .bubble,
+[data-motion="off"] .welcome__seal,
+[data-motion="off"] .letter__seal { animation: none !important; }
+[data-motion="off"] .welcome__bubbles { display: none; }
+[data-motion="off"] .book:hover .book__object { transform: translateY(-4px); }
+
+/* ── the cast ─────────────────────────────────────────────────────
+   Every gait is transform-only. --sway is how far it wanders sideways,
+   --flip mirrors the drawing so a shoal does not all face one way.
+   The scaleX(var(--flip)) has to be repeated in every keyframe, because
+   a transform list replaces the element's own transform entirely. */
+
+@keyframes creature-haunt {          /* horror: rises, sinks, hesitates */
+  0%, 100% { transform: translate(0, 0) scaleX(var(--flip)); opacity: .5; }
+  25%      { transform: translate(calc(var(--sway) * .4), -22px) scaleX(var(--flip)); opacity: .85; }
+  55%      { transform: translate(calc(var(--sway) * -.3), -40px) scaleX(var(--flip)); opacity: .7; }
+  80%      { transform: translate(calc(var(--sway) * .2), -18px) scaleX(var(--flip)); opacity: .82; }
+}
+
+@keyframes creature-flit {           /* bats and bookbirds: jagged, quick */
+  0%, 100% { transform: translate(0, 0) rotate(-4deg) scaleX(var(--flip)); }
+  20%      { transform: translate(calc(var(--sway) * .8), -26px) rotate(6deg) scaleX(var(--flip)); }
+  45%      { transform: translate(calc(var(--sway) * .3), 14px) rotate(-7deg) scaleX(var(--flip)); }
+  70%      { transform: translate(calc(var(--sway) * 1.1), -10px) rotate(5deg) scaleX(var(--flip)); }
+}
+
+@keyframes creature-glide {          /* paper: one long unbroken pass */
+  0%   { transform: translate(0, 0) rotate(-6deg) scaleX(var(--flip)); opacity: 0; }
+  12%  { opacity: .75; }
+  88%  { opacity: .75; }
+  100% { transform: translate(calc(var(--sway) * 2.4), -70px) rotate(4deg) scaleX(var(--flip)); opacity: 0; }
+}
+
+@keyframes creature-flutter {        /* butterflies and leaves: loose figure-eight */
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scaleX(var(--flip)); }
+  25%      { transform: translate(calc(var(--sway) * .6), -20px) rotate(12deg) scaleX(var(--flip)); }
+  50%      { transform: translate(calc(var(--sway) * 1), -6px) rotate(-8deg) scaleX(var(--flip)); }
+  75%      { transform: translate(calc(var(--sway) * .3), -28px) rotate(9deg) scaleX(var(--flip)); }
+}
+
+@keyframes creature-orbit {          /* sprites and atoms: a slow ring */
+  0%   { transform: translate(0, 0) scaleX(var(--flip)); }
+  25%  { transform: translate(var(--sway), calc(var(--sway) * -.5)) scaleX(var(--flip)); }
+  50%  { transform: translate(0, calc(var(--sway) * -1)) scaleX(var(--flip)); }
+  75%  { transform: translate(calc(var(--sway) * -1), calc(var(--sway) * -.5)) scaleX(var(--flip)); }
+  100% { transform: translate(0, 0) scaleX(var(--flip)); }
+}
+
+@keyframes creature-drift {          /* thought bubbles: barely moving */
+  0%, 100% { transform: translate(0, 0) scaleX(var(--flip)); }
+  50%      { transform: translate(calc(var(--sway) * .35), -16px) scaleX(var(--flip)); }
+}
+
+@keyframes creature-bob {            /* owls, lamps, the sun: stays put, breathes */
+  0%, 100% { transform: translate(0, 0) rotate(-2deg) scaleX(var(--flip)); }
+  50%      { transform: translate(0, -9px) rotate(2deg) scaleX(var(--flip)); }
+}
+
+@keyframes creature-swim {           /* koi: a long S through the water */
+  0%, 100% { transform: translate(0, 0) rotate(2deg) scaleX(var(--flip)); }
+  30%      { transform: translate(calc(var(--sway) * .9), -14px) rotate(-6deg) scaleX(var(--flip)); }
+  60%      { transform: translate(calc(var(--sway) * 1.4), 10px) rotate(7deg) scaleX(var(--flip)); }
+}
+
+@keyframes creature-roll {           /* coins: across, and actually rolling */
+  0%   { transform: translate(0, 0) rotate(0deg) scaleX(var(--flip)); opacity: 0; }
+  10%  { opacity: .8; }
+  90%  { opacity: .8; }
+  100% { transform: translate(calc(var(--sway) * 2.2), 0) rotate(720deg) scaleX(var(--flip)); opacity: 0; }
+}
+
+@keyframes creature-peer {           /* the magnifying glass, looking for something */
+  0%, 100% { transform: translate(0, 0) rotate(-8deg) scaleX(var(--flip)); }
+  30%      { transform: translate(calc(var(--sway) * .5), -12px) rotate(6deg) scaleX(var(--flip)); }
+  65%      { transform: translate(calc(var(--sway) * .2), 8px) rotate(-3deg) scaleX(var(--flip)); }
+}
+
+@keyframes wing-beat {
+  0%, 100% { transform: scaleY(1) scaleX(1); }
+  50%      { transform: scaleY(.46) scaleX(1.06); }
+}
+
+@keyframes tail-flick {
+  0%, 100% { transform: rotate(-9deg); }
+  50%      { transform: rotate(9deg); }
+}

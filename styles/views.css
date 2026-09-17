@@ -1,0 +1,1126 @@
+/* views.css — library, book detail, reading DNA, numbers, settings */
+
+/* ==========================================================
+   SHARED VIEW FURNITURE
+   ========================================================== */
+
+.view { animation: view-in 420ms var(--ease-out); }
+
+.page-head { margin-bottom: var(--sp-6); display: grid; gap: var(--sp-2); }
+.page-head__title { font-size: var(--step-4); font-weight: 500; letter-spacing: -.02em; }
+.page-head__sub {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-1);
+  color: var(--text-dim);
+  max-width: 58ch;
+}
+
+.section { margin-bottom: var(--sp-7); }
+.section__title {
+  font-size: var(--step-2);
+  margin-bottom: var(--sp-2);
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.section__note { font-size: var(--step--1); color: var(--text-mute); font-family: var(--font-body); }
+
+.card {
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  padding: var(--sp-5);
+  transition: border-color var(--t-mood) var(--ease-soft), background-color var(--t-mood) var(--ease-soft);
+}
+
+/* ==========================================================
+   LIBRARY — filter bar
+   ========================================================== */
+
+.filterbar {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 30;
+  margin: calc(var(--sp-6) * -1) calc(var(--sp-5) * -1) var(--sp-5);
+  padding: var(--sp-4) var(--sp-5) var(--sp-3);
+  background: color-mix(in oklab, var(--bg) 80%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  gap: var(--sp-3);
+}
+@media (max-width: 860px) {
+  .filterbar { margin: calc(var(--sp-5) * -1) calc(var(--sp-4) * -1) var(--sp-4); padding: var(--sp-3) var(--sp-4); }
+}
+
+.shelf-tabs {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.shelf-tabs::-webkit-scrollbar { display: none; }
+.shelf-tabs .pill { flex-shrink: 0; }
+
+.refine {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.refine .select {
+  width: auto;
+  min-width: 8.5rem;
+  padding: .34rem 2rem .34rem .7rem;
+  font-size: var(--step--2);
+  border-radius: var(--r-pill);
+  background-color: var(--surface);
+}
+.refine__spacer { flex: 1; }
+.refine__count {
+  font-size: var(--step--2);
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 560px) { .refine__spacer { display: none; } .refine { gap: 6px; } }
+
+.mood-note {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-0);
+  color: var(--accent-text);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 1.4em;
+}
+.mood-note::before {
+  content: "";
+  width: 18px; height: 1px;
+  background: var(--accent-line);
+  flex-shrink: 0;
+}
+
+/* ==========================================================
+   BOOK DETAIL
+   ========================================================== */
+
+.detail__hero {
+  position: relative;
+  display: flex;
+  gap: var(--sp-5);
+  padding: var(--sp-5);
+  align-items: flex-start;
+  overflow: hidden;
+}
+.detail__hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(90% 120% at 18% 0%, var(--accent-soft), transparent 68%);
+  pointer-events: none;
+  transition: background var(--t-mood) var(--ease-soft);
+}
+.detail__cover {
+  position: relative;
+  flex: 0 0 120px;
+  aspect-ratio: 2/3;
+  border-radius: 3px 7px 7px 3px;
+  overflow: hidden;
+  box-shadow: var(--shadow-3), 0 0 0 1px rgb(0 0 0 / .2);
+}
+.detail__cover svg, .detail__cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.detail__intro { flex: 1; min-width: 0; position: relative; }
+.detail__title { font-size: var(--step-3); font-weight: 500; margin-bottom: 4px; }
+.detail__author { font-size: var(--step-0); color: var(--text-dim); margin-bottom: var(--sp-3); }
+.detail__genre-line { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--sp-3); }
+
+.detail__quip {
+  font-family: var(--font-display);
+  font-style: italic;
+  color: var(--accent-text);
+  font-size: var(--step--1);
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--accent-line);
+}
+
+.detail__section { padding: var(--sp-5); border-top: 1px solid var(--border-soft); }
+.detail__label {
+  font-size: var(--step--2);
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin-bottom: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.detail__rating-row { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.detail__rating-word { font-family: var(--font-display); font-style: italic; color: var(--text-dim); font-size: var(--step--1); }
+
+/* the sealed-note styles are gone; .letter is kept only for the
+   welcome screen's paper block */
+.letter {
+  position: relative;
+  padding: var(--sp-5);
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--accent) 9%, var(--surface-2)), var(--surface-2));
+  border: 1px solid var(--accent-line);
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  line-height: 1.75;
+  color: var(--text);
+  white-space: pre-wrap;
+  box-shadow: var(--shadow-1);
+}
+.letter::before {
+  content: "\201C";
+  position: absolute;
+  top: -.1em; left: .3rem;
+  font-family: var(--font-display);
+  font-size: 3.4rem;
+  color: var(--accent-line);
+  line-height: 1;
+}
+.letter__sign {
+  display: block;
+  margin-top: var(--sp-3);
+  font-style: italic;
+  color: var(--accent-text);
+  font-size: var(--step--1);
+}
+.letter--sealed {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-2);
+  text-align: center;
+  cursor: pointer;
+  border-style: dashed;
+  transition: transform var(--t-mid) var(--ease-out), box-shadow var(--t-mid);
+}
+.letter--sealed:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+.letter--sealed::before { content: none; }
+.letter__seal {
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 1.1rem;
+  box-shadow: 0 6px 18px -6px var(--accent-line);
+  animation: seal-breathe 3.6s var(--ease-soft) infinite;
+}
+
+.attachments { display: grid; gap: var(--sp-2); }
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: var(--step--1);
+}
+.attachment__thumb {
+  width: 40px; height: 40px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--surface-3);
+  flex-shrink: 0;
+}
+.attachment__thumb--icon { display: grid; place-items: center; color: var(--text-mute); }
+.attachment__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment__size { color: var(--text-mute); font-size: var(--step--2); font-variant-numeric: tabular-nums; }
+
+.filedrop {
+  display: grid;
+  place-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-5);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-mute);
+  font-size: var(--step--1);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background-color var(--t-fast), color var(--t-fast);
+}
+.filedrop:hover, .filedrop.is-over { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-text); }
+
+/* ==========================================================
+   READING DNA
+   ========================================================== */
+
+.dna-hero {
+  position: relative;
+  padding: var(--sp-7) var(--sp-6);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--border-soft);
+  background:
+    radial-gradient(110% 130% at 12% 0%, var(--accent-soft), transparent 62%),
+    color-mix(in oklab, var(--surface) 76%, transparent);
+  overflow: hidden;
+  margin-bottom: var(--sp-6);
+}
+/* Words on one side, her picture on the other — never underneath it. */
+.dna-hero {
+  display: grid;
+  grid-template-columns: 1fr minmax(160px, 220px);
+  align-items: center;
+  gap: var(--sp-6);
+}
+.dna-hero__art { justify-self: end; width: 100%; }
+@media (max-width: 800px) {
+  .dna-hero { grid-template-columns: 1fr; }
+  .dna-hero__art { justify-self: center; max-width: 13rem; order: -1; }
+}
+
+.dna-hero__label { margin-bottom: var(--sp-2); }
+.dna-hero__caveat {
+  font-size: var(--step--1);
+  color: var(--text-mute);
+  font-style: italic;
+  margin-top: calc(var(--sp-3) * -1);
+  margin-bottom: var(--sp-4);
+}
+.dna-hero__name {
+  font-size: var(--step-4);
+  font-weight: 500;
+  letter-spacing: -.02em;
+  margin-bottom: var(--sp-4);
+  background: linear-gradient(110deg, var(--text), var(--accent-text) 70%, var(--accent));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.dna-hero__lines { display: grid; gap: var(--sp-3); max-width: 60ch; }
+.dna-hero__line {
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  line-height: 1.55;
+  color: var(--text-dim);
+  padding-left: var(--sp-4);
+  border-left: 2px solid var(--accent-line);
+  animation: rise-in 700ms var(--ease-out) backwards;
+}
+
+.dna-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--sp-4);
+}
+
+/* genre bars */
+.bars { display: grid; gap: var(--sp-3); }
+.bar__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+  font-size: var(--step--1);
+  margin-bottom: 5px;
+}
+.bar__name { font-weight: 550; }
+.bar__val { color: var(--text-mute); font-variant-numeric: tabular-nums; font-size: var(--step--2); }
+.bar__track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.bar__fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transform-origin: left;
+  animation: bar-grow 900ms var(--ease-out) backwards;
+}
+
+/* author constellation */
+.authors { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
+.author-tag {
+  padding: .3rem .75rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  font-family: var(--font-display);
+  line-height: 1.5;
+  transition: all var(--t-fast) var(--ease-out);
+}
+.author-tag:hover { border-color: var(--accent-line); color: var(--accent-text); transform: translateY(-2px); }
+.author-tag b { font-weight: 600; font-variant-numeric: tabular-nums; opacity: .55; font-size: .8em; margin-left: 4px; }
+
+/* theme cards */
+.themes { display: grid; gap: var(--sp-3); }
+.theme-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+}
+.theme-row__mark {
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 1rem;
+}
+.theme-row__body { display: grid; gap: 2px; }
+.theme-row__name { font-weight: 600; font-size: var(--step-0); }
+.theme-row__desc { font-size: var(--step--1); color: var(--text-dim); font-family: var(--font-display); font-style: italic; }
+.theme-row__count { font-size: var(--step--2); color: var(--text-mute); }
+
+/* ==========================================================
+   NUMBERS (dashboard)
+   ========================================================== */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+}
+.stat {
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--surface) 78%, transparent);
+  display: grid;
+  gap: 2px;
+  transition: border-color var(--t-fast), transform var(--t-fast) var(--ease-out);
+}
+.stat:hover { border-color: var(--accent-line); transform: translateY(-2px); }
+.stat__num {
+  font-family: var(--font-display);
+  font-size: var(--step-3);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+}
+.stat__label { font-size: var(--step--1); color: var(--text-dim); }
+.stat__foot { font-size: var(--step--2); color: var(--text-mute); }
+
+.progress-ring { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+.ring { position: relative; flex-shrink: 0; width: 132px; height: 132px; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring__bg { stroke: var(--surface-2); }
+.ring__fg {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1.2s var(--ease-out);
+}
+.ring__mid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 0;
+}
+.ring__pct { font-family: var(--font-display); font-size: var(--step-2); font-weight: 600; line-height: 1; }
+.ring__cap { font-size: var(--step--2); color: var(--text-mute); }
+
+.facts { display: grid; gap: var(--sp-3); }
+.fact {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fact:last-child { border-bottom: none; padding-bottom: 0; }
+.fact__icon { font-size: 1.1rem; flex-shrink: 0; width: 1.6rem; text-align: center; }
+.fact__body { display: grid; gap: 1px; }
+.fact__label { font-size: var(--step--2); letter-spacing: .1em; text-transform: uppercase; color: var(--text-mute); }
+.fact__value { font-family: var(--font-display); font-size: var(--step-1); }
+.fact__note { font-size: var(--step--1); color: var(--text-dim); font-style: italic; font-family: var(--font-display); }
+
+/* ==========================================================
+   SETTINGS
+   ========================================================== */
+
+.theme-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--sp-3);
+}
+.swatch {
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  display: grid;
+  gap: var(--sp-2);
+  text-align: left;
+  transition: all var(--t-fast) var(--ease-out);
+}
+.swatch:hover { transform: translateY(-2px); border-color: var(--accent-line); }
+.swatch.is-on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.swatch__strip { height: 34px; border-radius: var(--r-sm); border: 1px solid rgb(255 255 255 / .08); }
+.swatch__name { font-size: var(--step--1); font-weight: 600; }
+.swatch__desc { font-size: var(--step--2); color: var(--text-mute); }
+
+.seg-choice { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+
+.danger-zone {
+  border-color: color-mix(in oklab, #ff8b80 25%, var(--border-soft));
+  background: color-mix(in oklab, #ff8b80 5%, transparent);
+}
+
+.about-note {
+  font-family: var(--font-display);
+  font-size: var(--step-0);
+  line-height: 1.8;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+/* ==========================================================
+   TRIAGE (quick shelf-sorting)
+   ========================================================== */
+
+.triage { display: grid; gap: var(--sp-4); justify-items: center; text-align: center; }
+.triage__cover {
+  width: 132px;
+  aspect-ratio: 2/3;
+  border-radius: 3px 7px 7px 3px;
+  overflow: hidden;
+  box-shadow: var(--shadow-3);
+  animation: card-in 340ms var(--ease-out);
+}
+.triage__cover svg, .triage__cover img { width: 100%; height: 100%; object-fit: cover; }
+.triage__title { font-size: var(--step-2); }
+.triage__author { color: var(--text-dim); font-size: var(--step--1); }
+.triage__actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; justify-content: center; }
+.triage__progress { font-size: var(--step--2); color: var(--text-mute); font-variant-numeric: tabular-nums; }
+
+/* ==========================================================
+   BOOK DETAIL — ADDITIONS
+   ========================================================== */
+
+/* the book-opening motion: the sheet arrives like a cover swinging open */
+.drawer--opening { transform-origin: right center; }
+.drawer--opening .drawer__body { animation: pages-in 620ms var(--ease-out); }
+@keyframes pages-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.drawer--opening .detail__cover { animation: cover-open 620ms var(--ease-out); }
+@keyframes cover-open {
+  from { transform: perspective(700px) rotateY(-58deg); opacity: .4; }
+  to   { transform: perspective(700px) rotateY(0); opacity: 1; }
+}
+
+/* the per-book motif, sitting behind the hero */
+.detail__motif {
+  position: absolute;
+  right: -10px;
+  top: 4px;
+  width: 210px;
+  height: 105px;
+  opacity: .5;
+  pointer-events: none;
+}
+[data-theme="light"] .detail__motif { opacity: .38; }
+
+.detail__blurb {
+  font-family: var(--font-reading);
+  font-size: var(--step-0);
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+
+/* reading progress */
+.progress { margin-top: var(--sp-4); display: grid; gap: var(--sp-2); }
+.progress__track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.progress__bar {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width var(--t-mid) var(--ease-out);
+}
+.progress__row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.input--tiny { width: 5rem; padding: .32rem .5rem; font-size: var(--step--1); }
+.select--tiny { width: auto; padding: .32rem 1.9rem .32rem .6rem; font-size: var(--step--1); }
+.progress__of { color: var(--text-mute); font-size: var(--step--1); }
+.progress__pct {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--step--1);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.progress__line {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step--1);
+  color: var(--text-mute);
+}
+
+/* the notebook */
+.note-new { display: flex; gap: var(--sp-2); align-items: flex-start; margin-bottom: var(--sp-4); }
+.note-new__field { min-height: 3.4rem; flex: 1; }
+
+.notes { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); }
+.note {
+  position: relative;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  background:
+    repeating-linear-gradient(var(--surface-2) 0 26px, color-mix(in oklab, var(--border-soft) 55%, transparent) 26px 27px);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+}
+.note.is-pinned { border-left-color: var(--accent); background-color: var(--surface-2); }
+.note__text {
+  font-family: var(--font-reading);
+  font-size: var(--step-0);
+  line-height: 27px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.note__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+  font-size: var(--step--2);
+  color: var(--text-mute);
+}
+.note__act { color: var(--text-mute); font-size: var(--step--2); }
+.note__act:hover { color: var(--accent-text); }
+.note.is-pinned .note__act[aria-pressed="true"] { color: var(--accent-text); }
+
+/* the scrapbook */
+.memories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--sp-3);
+}
+.memory {
+  position: relative;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+  background: color-mix(in oklab, var(--surface-2) 90%, white);
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  box-shadow: var(--shadow-1);
+  transform: rotate(-1deg);
+}
+.memory:nth-child(even) { transform: rotate(1.2deg); }
+.memory__img {
+  width: 100%;
+  aspect-ratio: 4/3;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-3);
+  border-radius: 2px;
+}
+.memory__cap { display: grid; gap: 2px; margin-top: var(--sp-2); }
+.memory__note {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  color: var(--text);
+  padding: 0;
+}
+.memory__note:focus { outline: none; border-bottom: 1px solid var(--accent-line); }
+.memory__date { font-size: var(--step--2); color: var(--text-mute); }
+.memory__x {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / .45);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+.memory:hover .memory__x, .memory:focus-within .memory__x { opacity: 1; }
+.filedrop--memory { border-style: solid; border-color: var(--border-soft); }
+
+/* ==========================================================
+   READING DNA — THE PICTURES
+   ========================================================== */
+
+.dna-hero__top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+/* --- the ocean map --- */
+.ocean-map {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  overflow: visible;
+}
+.island {
+  cursor: pointer;
+  animation: island-rise 700ms var(--ease-out) backwards;
+  animation-delay: var(--d);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--t-mid) var(--ease-out);
+}
+@keyframes island-rise { from { opacity: 0; transform: translateY(14px) scale(.9); } }
+.island:hover, .island:focus-visible { transform: translateY(-5px) scale(1.04); }
+.island:focus-visible { outline: none; }
+.island:focus-visible .island__land { stroke: var(--accent); stroke-width: 2.5; }
+.island__shore { transition: fill var(--t-mid); }
+.island:hover .island__shore { fill: rgb(var(--world-glow) / .42); }
+.island__land { transition: fill var(--t-mid); }
+.island:hover .island__land { fill: rgb(var(--world-ink) / .45); }
+.island__icon { pointer-events: none; }
+/* Island captions have to read over water, over sand and over each
+   other's halos. paint-order lets the fill sit on top of a stroke drawn
+   in the page colour, which is an outline rather than a shadow — much
+   crisper at these sizes, and it costs nothing. */
+.island__name {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: .005em;
+  fill: var(--text);
+  paint-order: stroke fill;
+  stroke: rgb(var(--world-bg));
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.island__count {
+  font-size: 11.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  fill: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke fill;
+  stroke: rgb(var(--world-bg));
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.ocean-map__more {
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  fill: var(--text-mute);
+  font-style: italic;
+}
+
+/* --- the taste garden --- */
+.garden {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-6) var(--sp-4) var(--sp-6);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, transparent 40%, rgb(var(--world-glow) / .07));
+  overflow: hidden;
+}
+.garden__soil {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 26px;
+  background: linear-gradient(180deg, rgb(var(--world-ink) / .18), rgb(var(--world-ink) / .28));
+}
+.flower {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 0 var(--sp-1);
+  animation: grow 800ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i) * 90ms);
+  transition: transform var(--t-mid) var(--ease-out);
+}
+@keyframes grow { from { opacity: 0; transform: translateY(20px) scale(.6); } }
+.flower svg {
+  width: calc(58px + var(--scale) * 46px);
+  height: auto;
+  transform-origin: bottom center;
+  transition: transform var(--t-mid) var(--ease-out);
+}
+.flower:hover { transform: translateY(-4px); }
+.flower:hover svg { transform: rotate(-3deg) scale(1.06); }
+.flower__name {
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  font-weight: 600;
+  text-align: center;
+  max-width: 9rem;
+}
+.flower__count { font-size: var(--step--2); color: var(--text-mute); font-variant-numeric: tabular-nums; }
+
+/* --- the constellation --- */
+.constellation {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-soft);
+  background: radial-gradient(120% 120% at 50% 0%, rgb(var(--world-glow) / .1), transparent 70%);
+}
+.star-node { cursor: pointer; animation: fade-in 700ms var(--ease-out) backwards; animation-delay: var(--d); }
+.star-node__halo { fill: rgb(var(--world-glow) / .12); transition: fill var(--t-mid), r var(--t-mid); }
+.star-node__dot { fill: rgb(var(--world-glow) / .95); }
+.star-node:hover .star-node__halo, .star-node:focus-visible .star-node__halo { fill: rgb(var(--world-glow) / .32); }
+.star-node:focus-visible { outline: none; }
+.star-node:focus-visible .star-node__dot { stroke: var(--accent); stroke-width: 3; }
+/* Author names sit over joining lines and, on a crowded chart, close to
+   each other. Same trick as the island captions: the fill is painted on
+   top of a stroke in the page colour, which is an outline rather than a
+   shadow — crisper at this size, and it costs nothing. */
+.star-node__label {
+  font-size: 13px;
+  fill: var(--text-dim);
+  font-family: var(--font-display);
+  paint-order: stroke fill;
+  stroke: rgb(var(--world-bg));
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.star-node:hover .star-node__label,
+.star-node:focus-visible .star-node__label { fill: var(--text); }
+
+/* theme rows are buttons now */
+button.theme-row { width: 100%; text-align: left; cursor: pointer; transition: border-color var(--t-fast), transform var(--t-fast); }
+button.theme-row:hover { border-color: var(--accent-line); transform: translateX(3px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .island, .flower, .star-node { animation: none !important; }
+}
+[data-motion="off"] .island,
+[data-motion="off"] .flower,
+[data-motion="off"] .star-node { animation: none !important; }
+
+@media (max-width: 640px) {
+  .flower svg { width: calc(44px + var(--scale) * 30px); }
+  .garden { padding: var(--sp-5) var(--sp-2) var(--sp-5); gap: var(--sp-1) var(--sp-2); }
+}
+
+/* ── the shelf tally ──────────────────────────────────────────────
+   Numbers with their working shown. Every value is counted from the
+   library at render time, so the panel cannot drift out of date the
+   way a hardcoded "96 books" does. */
+.tally {
+  display: grid;
+  gap: var(--sp-2);
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.tally__row {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--surface-2) 70%, transparent);
+  border: 1px solid var(--border-soft);
+}
+.tally__num {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text);
+  line-height: 1;
+  min-width: 2.2ch;
+  text-align: right;
+}
+.tally__body { display: grid; gap: 2px; }
+.tally__label { font-weight: 600; font-size: var(--step--1); }
+.tally__note { font-size: var(--step--2); color: var(--text-mute); line-height: 1.5; }
+
+/* A small aside under the genre chips on a book page. Rotates on every
+   open; deliberately quieter than the genre quip above it. */
+.detail__aside {
+  margin-top: var(--sp-2);
+  font-family: var(--font-hand);
+  font-size: var(--step--1);
+  color: var(--text-mute);
+  line-height: 1.5;
+}
+
+
+/* ── Numbers: her at the desk, beside the arithmetic ────────────── */
+.stats-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 260px);
+  align-items: center;
+  gap: var(--sp-5);
+}
+.stats-head .page-head { position: relative; margin-bottom: 0; }
+.stats-head__cat { margin-top: var(--sp-3); }
+.stats-head__art .scene {
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2), 0 0 0 1px rgb(var(--world-glow) / .2);
+}
+@media (max-width: 720px) {
+  .stats-head { grid-template-columns: 1fr; }
+  .stats-head__art { order: -1; justify-self: center; max-width: 13rem; }
+}
+
+/* ============================================================
+   THE GENRE STAGE
+
+   Choosing a genre does not decorate the page — it changes the
+   room. The artwork fills the whole band, the genre's weather
+   falls in front of it, and the words sit INSIDE the scene on a
+   scrim that fades out before the middle.
+
+   The rule that survives from the card version: nothing is ever
+   printed across her face. The scrim is a vertical wedge on the
+   text side only, and the artwork's focal side is left clear.
+   ============================================================ */
+
+.stage {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  align-items: end;
+  min-height: clamp(18rem, 38vh, 25rem);
+  padding: var(--sp-6);
+  margin: calc(var(--sp-6) * -1) calc(var(--sp-5) * -1) var(--sp-6);
+  border-bottom: 1px solid var(--accent-line);
+  animation: stage-in 760ms var(--ease-out) both;
+}
+@keyframes stage-in { from { opacity: 0; transform: scale(1.02); } }
+
+/*
+  THE SCENE IS ANCHORED, NOT FULL-BLEED — and that is a resolution
+  decision, not a taste one.
+
+  Each genre panel is a crop out of a 1536px collage, so it is only
+  about 370px wide at source. Stretching one across a 1300px band
+  magnifies it three and a half times and turns her into a blurred
+  smear; the first version of this stage did exactly that.
+
+  So the scene occupies the right of the band at roughly its native
+  scale and bleeds off the top, right and bottom edges, with its left
+  edge dissolved by a mask. Nothing frames it, so it still reads as a
+  room she is standing in rather than a picture hung on the page — but
+  nothing is magnified past what the artwork can carry either.
+*/
+.stage__scene {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: min(56%, 580px);
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 34%, #000 100%);
+}
+.stage__scene .scene { border-radius: 0; background: none; }
+
+/* A soft ground under the words and along the bottom edge. */
+.stage__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(75% 120% at 0% 60%, var(--bg) 0%,
+      color-mix(in oklab, var(--bg) 55%, transparent) 45%, transparent 72%),
+    linear-gradient(0deg, color-mix(in oklab, var(--bg) 78%, transparent), transparent 46%);
+}
+
+.stage__body { position: relative; z-index: 3; max-width: 40ch; }
+.stage__eyebrow {
+  font-size: var(--step--2);
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.stage__name {
+  font-family: var(--font-display);
+  font-size: var(--step-4);
+  line-height: 1.05;
+  margin: var(--sp-2) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.stage__icon { font-size: .7em; }
+.stage__quip {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--step-1);
+  color: var(--accent-text);
+}
+.stage__line {
+  margin-top: var(--sp-2);
+  font-family: var(--font-hand);
+  font-size: var(--step--1);
+  color: var(--text-dim);
+}
+
+/* The kitten keeps the words company: this world's mood, this
+   world's coat, sitting on the same line as its aside. */
+.stage__foot {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.stage__cat { flex: 0 0 auto; filter: drop-shadow(0 8px 16px rgb(0 0 0 / .4)); }
+.stage__foot .stage__line { margin: 0 0 var(--sp-2); }
+
+/* ---------------- the weather ----------------
+   Each genre's particles fall in front of the scene. Built from
+   the same tokens the world stage uses, so horror rains, romance
+   drops petals and fantasy sparks — over her artwork rather than
+   behind the whole page. */
+.stage__weather { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
+.stage__weather::before,
+.stage__weather::after {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background-repeat: repeat;
+  opacity: .5;
+}
+
+/* rain — mystery, literary, horror.
+   Fine and faint on purpose: at the first weight it read as diagonal
+   hatching ruled across the artwork rather than as weather, and on the
+   light palette it was worse, because --world-glow is pale there. */
+.stage__weather[data-weather="rain"]::before {
+  background-image: repeating-linear-gradient(104deg,
+    rgb(var(--world-glow) / .32) 0 1px, transparent 1px 16px);
+  background-size: 160px 160px;
+  animation: stage-rain 800ms linear infinite;
+  opacity: .55;
+}
+[data-theme="light"] .stage__weather[data-weather="rain"]::before,
+[data-theme="parchment"] .stage__weather[data-weather="rain"]::before {
+  background-image: repeating-linear-gradient(104deg,
+    rgb(var(--world-ink) / .16) 0 1px, transparent 1px 18px);
+  opacity: .4;
+}
+@keyframes stage-rain { to { transform: translate3d(-24px, 120px, 0); } }
+
+/* fog — horror */
+.stage__weather[data-weather="fog"]::before {
+  background-image:
+    radial-gradient(closest-side, rgb(var(--world-ink) / .16), transparent 70%),
+    radial-gradient(closest-side, rgb(var(--world-ink) / .12), transparent 70%);
+  background-size: 60% 70%, 45% 55%;
+  background-position: 0% 60%, 70% 40%;
+  filter: blur(8px);
+  animation: stage-fog 26s ease-in-out infinite alternate;
+}
+@keyframes stage-fog { to { background-position: 80% 50%, 10% 55%; } }
+
+/* petals, sparks, motes, coins, stars, ash — all one dot field,
+   differing in colour, size and the direction they travel */
+.stage__weather[data-weather="petals"]::before,
+.stage__weather[data-weather="sparks"]::before,
+.stage__weather[data-weather="motes"]::before,
+.stage__weather[data-weather="coins"]::before,
+.stage__weather[data-weather="stars"]::before,
+.stage__weather[data-weather="ash"]::before,
+.stage__weather[data-weather="bubbles"]::before,
+.stage__weather[data-weather="confetti"]::before {
+  background-image: radial-gradient(circle, rgb(var(--world-glow) / .85) 0 1.6px, transparent 2px);
+  background-size: 84px 84px;
+  animation: stage-drift 15s linear infinite;
+}
+.stage__weather[data-weather="petals"]::after,
+.stage__weather[data-weather="sparks"]::after,
+.stage__weather[data-weather="stars"]::after {
+  background-image: radial-gradient(circle, rgb(var(--world-glow) / .55) 0 1.1px, transparent 1.6px);
+  background-size: 130px 130px;
+  animation: stage-drift 26s linear infinite reverse;
+}
+.stage__weather[data-weather="ash"]::before { animation-direction: reverse; }
+@keyframes stage-drift { to { transform: translate3d(40px, -84px, 0); } }
+
+/* ---------------- responsive ---------------- */
+
+@media (max-width: 860px) {
+  .stage {
+    margin: calc(var(--sp-5) * -1) calc(var(--sp-4) * -1) var(--sp-5);
+    padding: var(--sp-5);
+    min-height: 15rem;
+  }
+  /* On a phone the scene takes the top of the band and the words sit
+     under it: there is not enough width to have both a legible sentence
+     and a visible scene side by side. */
+  .stage__scene {
+    inset: 0 0 auto 0;
+    width: 100%;
+    height: 58%;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 58%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 58%, transparent 100%);
+  }
+  .stage__scrim {
+    background: linear-gradient(0deg,
+      var(--bg) 22%,
+      color-mix(in oklab, var(--bg) 74%, transparent) 54%,
+      transparent 100%);
+  }
+  .stage { align-items: end; min-height: 22rem; }
+  .stage__cat { right: var(--sp-3); scale: .78; transform-origin: bottom right; }
+  .stage__body { max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage { animation: none; }
+  .stage__weather { display: none; }
+}
+[data-motion="off"] .stage { animation: none; }
+[data-motion="off"] .stage__weather { display: none; }
+
+/* The way back out of a genre she walked into rather than filtered to. */
+.stage__back {
+  position: absolute;
+  top: var(--sp-4);
+  left: var(--sp-6);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: .4rem .8rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--accent-line);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text);
+  font-size: var(--step--2);
+  transition: transform var(--t-fast) var(--ease-out), background-color var(--t-fast);
+}
+.stage__back:hover { transform: translateX(-2px); background: var(--surface); }
+.stage__back svg { stroke: currentColor; stroke-width: 2; fill: none; }
+@media (max-width: 860px) { .stage__back { left: var(--sp-5); top: var(--sp-3); } }

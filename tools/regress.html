@@ -1,0 +1,281 @@
+<!doctype html><html><head><meta charset="utf-8"><title>regress</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap"></pre>
+<script>
+// world-stage coalesces paints with rAF, which never fires under
+// --virtual-time-budget. Stub it so the stage can be tested at all.
+window.requestAnimationFrame = (fn) => setTimeout(() => fn(performance.now()), 0);
+</script>
+<script type="module">
+const out = document.getElementById('out');
+const say = (s) => { out.textContent += s + '\n'; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+let fails = 0;
+const ok = (cond, label, extra = '') => {
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+
+try {
+  const html = await (await fetch('/index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  // index.html links its stylesheets relatively. This page is served from
+  // /tools/, so those have to be re-rooted or every href 404s and the
+  // palette checks fail for reasons that have nothing to do with the app.
+  for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const copy = l.cloneNode();
+    copy.setAttribute('href', new URL(l.getAttribute('href'), location.origin).pathname);
+    document.head.append(copy);
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div id="shell">${doc.body.innerHTML}</div>`);
+  document.querySelectorAll('#shell script').forEach((s) => s.remove());
+  document.getElementById('welcome')?.remove();
+  document.getElementById('app').hidden = false;
+
+  const M = {
+    adapter: await import('/src/storage/adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    store: await import('/src/state/store.js'),
+    cache: await import('/src/ui/cover-urls.js'),
+    app: await import('/src/ui/app.js'),
+    seed: await import('/src/data/seed-books.js'),
+    covers: await import('/src/data/covers.js'),
+    policy: await import('/src/data/cover-policy.js'),
+    theme: await import('/src/theme/theme-manager.js'),
+    quips: await import('/src/data/quips.js'),
+    imp: await import('/src/data/import.js'),
+    worlds: await import('/src/theme/worlds.js'),
+    creatures: await import('/src/theme/creatures.js'),
+    cand: await import('/src/data/birthday-candidates.js'),
+  };
+
+  const repo = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await repo.init({
+    seedBooks: M.seed.SEED_BOOKS,
+    seedVersion: M.seed.SEED_VERSION,
+    retiredKeys: M.seed.RETIRED_KEYS,
+  });
+  const prefs = { ...M.store.DEFAULT_PREFS };
+  M.theme.applyPreferences(prefs);
+  const store = M.store.createStore({ prefs, view: M.store.VIEWS.LIBRARY, ready: true });
+  const cache = M.cache.createCoverCache(repo);
+  const app = M.app.createApp({ repo, store, cache });
+  app.stage.setEnabled(true);
+  app.render();
+  await tick();
+
+  say('-- dataset --');
+  const books = repo.all();
+  ok(books.length === M.seed.SEED_COUNT, 'repo count matches the seed', String(books.length));
+  ok(!books.some((b) => /Klara/.test(b.title)), 'Klara is not on the shelves');
+  ok(M.cand.BIRTHDAY_CANDIDATES.some((b) => /Klara/.test(b.title)), 'Klara is on the birthday shortlist');
+  ok(books.every((b) => b.title && b.author), 'every book has a title and an author');
+  ok(books.every((b) => b.status === 'tbr'), 'nothing arrives pre-marked as read');
+  const flagged = books.filter((b) => b.needsReview);
+  ok(flagged.length > 0 && flagged.every((b) => !b.coverUrl),
+    'flagged rows carry no guessed cover', `${flagged.length} flagged`);
+
+  say('-- covers --');
+  const real = books.filter((b) => M.policy.resolveCover(b, cache.forBook(b)).status === M.policy.COVER_STATUS.REAL);
+  ok(real.length === M.covers.COVER_COUNT, 'real-cover count equals the verified registry',
+    `${real.length}/${M.covers.COVER_COUNT}`);
+  const noPhoto = books.find((b) => !b.coverUrl);
+  ok(Boolean(noPhoto), 'there is a book with no photograph, to test the fallback');
+  ok(M.policy.resolveCover(noPhoto, cache.forBook(noPhoto)).status === 'fallback',
+    'a book with no photo resolves to the drawn cover');
+  repo.setCover(noPhoto.id, { url: 'https://example.com/c.jpg', source: 'manual' });
+  const over = M.policy.resolveCover(noPhoto, cache.forBook(noPhoto));
+  ok(over.url.includes('example.com') && over.source === 'manual', 'an override beats the book record');
+  ok(repo.get(noPhoto.id).coverUrl === '', 'setting a cover did NOT rewrite the book');
+  repo.clearCover(noPhoto.id);
+  ok(M.policy.resolveCover(noPhoto, cache.forBook(noPhoto)).status === 'fallback', 'clearing falls back again');
+
+  say('-- every book opens the same component --');
+  // The shelves layout caps each genre rail at 18 covers behind a
+  // "See all" button, so counting cards there measures the rail limit
+  // rather than the library. The flat grid is the honest comparison.
+  store.set({ shelf: 'all', prefs: { layout: 'grid' } });
+  await tick();
+  const ids = [...document.querySelectorAll('.book__hit')].map((e) => e.dataset.open);
+  ok(ids.length === books.length, 'every book has a card', String(ids.length));
+  const shapes = new Set();
+  let noOpen = 0;
+  let noCover = 0;
+  for (const id of ids) {
+    const hit = document.querySelector(`[data-open="${id}"]`);
+    if (!hit) { noOpen += 1; continue; }
+    hit.click();
+    await tick();
+    const drawer = document.querySelector('.drawer');
+    if (!drawer) { noOpen += 1; continue; }
+    if (!drawer.querySelector('.detail__cover svg')) noCover += 1;
+    shapes.add([...drawer.querySelectorAll('.detail__label')].map((e) => e.textContent.trim()).sort().join('|'));
+    document.querySelector('[data-close-drawer]')?.click();
+    await tick();
+    document.querySelector('.drawer')?.remove();
+    document.querySelector('.scrim')?.remove();
+  }
+  ok(noOpen === 0, 'no book failed to open', `${noOpen} failures`);
+  ok(noCover === 0, 'every book page drew a cover', `${noCover} missing`);
+  ok(shapes.size === 1, 'every book page has the identical section set', `${shapes.size} distinct`);
+
+  say('-- worlds and characters --');
+  const worlds = Object.entries(M.worlds.WORLDS);
+  ok(worlds.every(([, w]) => w.cast?.length), 'every world has a cast');
+  ok(new Set(worlds.map(([, w]) => w.backdrop().length)).size >= 10,
+    'the backdrops are genuinely different drawings');
+  ok(new Set(Object.values(M.creatures.CREATURES).map((c) => c.motion)).size >= 8,
+    'creatures have distinct gaits');
+  app.stage.show('hollow');
+  for (let i = 0; i < 40 && !document.querySelector('.world__creature'); i += 1) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const cast = [...document.querySelectorAll('.world__layer.is-front .world__creature')];
+  ok(cast.length >= 3, 'the horror world puts characters on stage', String(cast.length));
+  ok(!cast.some((e) => {
+    const x = parseFloat(e.style.left);
+    return x > 30 && x < 70;
+  }), 'no character drifts over the centre column');
+  app.stage.setEnabled(false);
+  ok(document.querySelectorAll('.world__creature').length === 0, 'motion off removes characters from the DOM');
+  app.stage.setEnabled(true);
+
+  say('-- themes --');
+  ok(Object.values(M.theme.THEMES).every((t) => t.scheme), 'every theme declares light or dark');
+  ok(M.theme.themesOfScheme('light').length >= 2 && M.theme.themesOfScheme('dark').length >= 2,
+    'both families have real choices');
+  ok(M.theme.resolveTheme({ appearance: 'light', themeLight: 'parchment' }) === 'parchment',
+    'appearance=light picks her light palette');
+  ok(M.theme.resolveTheme({ appearance: 'dark', themeDark: 'library' }) === 'library',
+    'appearance=dark picks her dark palette');
+  ok(M.theme.THEMES[M.theme.resolveTheme({ appearance: 'system' })].scheme === M.theme.systemScheme(),
+    'system follows the OS');
+  let differed = 0;
+  for (let i = 0; i < 20; i += 1) if (M.theme.shuffleTheme('ocean') !== 'ocean') differed += 1;
+  ok(differed === 20, 'shuffle never returns the theme already showing');
+  ok(M.theme.THEMES[M.theme.shuffleTheme('ocean', 'dark')].scheme === 'dark',
+    'shuffle respects a pinned family');
+  document.documentElement.dataset.theme = 'parchment';
+  ok(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() !== '',
+    'the new palette has real tokens');
+  document.documentElement.dataset.theme = 'ocean';
+
+  say('-- the importer --');
+  const pasted = [
+    'S. No.\tBook Name\tAuthor\tGenre',
+    "1\tThe Famous Five (Five Go to Smuggler's Top; Five Go Off in a Caravan; Five on Kirrin Island Again)\tEnid Blyton\tChildren's",
+    '2\tThe Stockmen; Black Wind; Gweilo; The Blood-Dimmed Tide\tVarious\tFiction',
+    '3\tBook Theif\tMarkus Zusak\tHistorical Fiction',
+    '4\tThe Haindmaid’s Tale\tMargaret Atwood\tDystopian',
+    '5\tOliver Twist\tOliver Dicken\tClassics',
+    '6\tBabel (Or the Necessity of Violence)\tR. F. Kuang\tFantasy',
+    '7\tThe Art of Thinking Clearly\tRolf Dobelli\tPsychology',
+    '8\tThe Art of Thinking Clearly\tRolf Dobelli\tPsychology',
+    '9\tA Brand New Book Nobody Has\tJane Someone\tFiction',
+  ].join('\n');
+  const parsed = M.imp.parseBookList(pasted);
+  const rep = parsed.report;
+  say(`     rows=${rep.rows} split=+${rep.split} merged=${rep.merged} books=${rep.books}`);
+  ok(rep.rows === 8, 'the header row is skipped and the duplicate line folded', String(rep.rows));
+  ok(rep.split >= 5, 'compound rows were split apart', `+${rep.split}`);
+  ok(parsed.books.some((b) => b.title === 'The Book Thief'), 'Book Theif was corrected');
+  ok(parsed.books.some((b) => b.author === 'Charles Dickens'), 'Oliver Dicken was corrected');
+  ok(parsed.books.some((b) => /^Babel/.test(b.title) && /Necessity/.test(b.title)),
+    'a bracketed subtitle was NOT split');
+  ok(parsed.books.some((b) => b.title === 'Five on Kirrin Island Again'),
+    'the Famous Five became separate books');
+  const before = repo.count();
+  const result = repo.importBooks(parsed.books);
+  ok(result.added >= 1, 'a genuinely new book was added', `added ${result.added}`);
+  ok(result.skipped >= 5, 'books already shelved were skipped, not duplicated', `skipped ${result.skipped}`);
+  ok(repo.count() === before + result.added, 'the count moved by exactly what was added');
+
+  say('-- rotating messages --');
+  const seen = new Set();
+  for (let i = 0; i < 6; i += 1) {
+    M.quips.arrive('t');
+    seen.add(M.quips.line(M.quips.WELCOME_BACK, 't', 'x'));
+  }
+  ok(seen.size >= 4, 'a line changes on each arrival', `${seen.size} distinct in 6`);
+  const held = M.quips.line(M.quips.WELCOME_BACK, 'u', 'same');
+  ok(M.quips.line(M.quips.WELCOME_BACK, 'u', 'same') === held, 'it holds steady while the token does not change');
+  ok(M.quips.line(M.quips.WELCOME_BACK, 'u', 'other') !== held, 'a new token draws a new line');
+
+  say('-- the other views --');
+  for (const view of ['dna', 'stats', 'settings']) {
+    store.set({ view });
+    await tick();
+    ok(document.querySelector('#view').children.length > 0, `${view} renders`);
+  }
+
+  store.set({ view: 'dna' });
+  await tick();
+  const isl = [...document.querySelectorAll('.island')];
+  ok(isl.length >= 5, 'the reading ocean has islands', String(isl.length));
+  ok(isl.every((g) => g.querySelector('.island__name tspan')), 'island names are wrapped into tspans');
+  const boxes = isl.map((g) => g.querySelector('.island__land').getBBox());
+  let overlaps = 0;
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) overlaps += 1;
+    }
+  }
+  ok(overlaps === 0, 'no two islands overlap', `${overlaps} overlapping pairs`);
+
+  say('-- nothing speaks for him any more --');
+  // The library is hers. Not a space with somebody else's commentary in
+  // it. If any of this comes back, it comes back as a test failure.
+  let lettersModuleGone = false;
+  try { await import('/src/data/letters.js'); } catch { lettersModuleGone = true; }
+  ok(lettersModuleGone, 'the letters module is gone entirely');
+  const pageText = document.querySelector('#view').textContent;
+  ok(!/boyfriend|from him|note that came with it/i.test(pageText),
+    'no view mentions him');
+  ok(!books.some((b) => 'curatorNote' in b), 'the book record has no sealed-note field');
+
+  store.set({ view: 'dna' });
+  await tick();
+  const starLabels = [...document.querySelectorAll('.star-node__label')];
+  if (starLabels.length) {
+    ok(starLabels.every((t) => t.querySelector('tspan')),
+      'author names are wrapped into tspans', `${starLabels.length} authors`);
+    const boxes = starLabels.map((t) => t.getBBox());
+    let clashes = 0;
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) clashes += 1;
+      }
+    }
+    ok(clashes === 0, 'no two author labels overlap', `${clashes} overlapping pairs`);
+  }
+
+  say('-- library mode --');
+  store.set({ view: 'building', room: null, floor: 0 });
+  await tick();
+  ok(document.querySelectorAll('[data-room-id]').length > 0, 'the floor plan draws rooms',
+    String(document.querySelectorAll('[data-room-id]').length));
+  ok(Boolean(document.querySelector('[data-lm-walker]')), 'her character is on the floor');
+  ok(Boolean(document.querySelector('[data-lm-viewport]')), 'the floor has a camera viewport');
+  ok(document.querySelectorAll('[data-floor]').length <= 3, 'never more than three floors',
+    String(document.querySelectorAll('[data-floor]').length));
+
+  store.set({ view: 'settings' });
+  await tick();
+  ok(document.querySelectorAll('[data-set-appearance]').length === 3, 'light / dark / system are all offered');
+  ok(document.querySelectorAll('[data-set-theme]').length === Object.keys(M.theme.THEMES).length,
+    'every theme is in the picker');
+  ok(Boolean(document.querySelector('[data-action="shuffle-theme"]')), 'the theme shuffle is there');
+  ok(document.querySelectorAll('.tally__row').length >= 5, 'the shelf tally is rendered');
+  const tally = document.querySelector('.tally__num')?.textContent;
+  ok(Number(tally) === repo.count(), 'the tally shows the live count', `${tally} vs ${repo.count()}`);
+} catch (error) {
+  fails += 1;
+  say('THREW: ' + (error && error.stack ? error.stack : error));
+}
+
+say(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
+say('<<END>>');
+</script></body></html>

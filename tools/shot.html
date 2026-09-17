@@ -1,0 +1,131 @@
+<!doctype html><html><head><meta charset="utf-8"><title>shot</title>
+<style>
+html,body{margin:0}
+/*
+  Kill the mood transition FOR THE PHOTOGRAPH ONLY.
+
+  index.html has its stylesheets in the document from the first paint, so
+  body text is the right colour immediately. This page fetches the shell
+  and attaches the stylesheets afterwards, which means body colour starts
+  at the initial black and then TRANSITIONS to the palette over 900ms —
+  and a screenshot taken during that window shows near-black headings and
+  looks exactly like a contrast bug that does not exist in the app.
+*/
+body, .world__layer, #view, .view { transition: none !important; }
+/*
+  And hold every entrance animation at its END state.
+
+  CSS animations do not advance reliably in this headless configuration,
+  so anything with `animation-fill-mode: both` and a delay is photographed
+  at 0% — which is opacity 0. The landing page's door cards simply were
+  not in the picture, and looked like a bug that did not exist.
+*/
+.lp, .lp__scene, .lp__door, .lp__bubble, .view, .genre-banner,
+.book, .lmx { animation: none !important; }
+</style></head><body>
+<script>
+// Real rAF here: this page is being photographed, so the scenery and the
+// character should actually be laid out rather than stubbed.
+window.__ready = false;
+</script>
+<script type="module">
+/**
+ * shot.html — boot the app for a screenshot.
+ *
+ * ?view=home|library|building|dna|stats|settings
+ * ?room=<room id>    open a section in Library Mode
+ * ?theme=<palette>
+ * ?motion=off
+ *
+ * Uses the memory adapter, so photographing a page never touches her
+ * real library.
+ */
+const params = new URLSearchParams(location.search);
+
+const html = await (await fetch('/index.html')).text();
+const doc = new DOMParser().parseFromString(html, 'text/html');
+for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) {
+  const copy = l.cloneNode();
+  copy.setAttribute('href', new URL(l.getAttribute('href'), location.origin).pathname);
+  document.head.append(copy);
+}
+// Carry the <html> attributes across too. index.html ships data-theme
+// and data-mood so the very first paint is in the right key; a harness
+// that only copies <body> starts in a state the app never actually has.
+for (const attr of doc.documentElement.attributes) {
+  document.documentElement.setAttribute(attr.name, attr.value);
+}
+document.body.insertAdjacentHTML('beforeend', doc.body.innerHTML);
+document.querySelectorAll('body > script').forEach((s) => { if (!s.type) s.remove(); });
+// ?landing=1 photographs the front door instead of the app behind it.
+// It needs its own mode because index.html cannot be screenshotted
+// directly: its entrance animations are still at 0% when the load event
+// fires, and its real IndexedDB boot never finishes under virtual time.
+const wantLanding = params.get('landing') === '1';
+if (!wantLanding) {
+  document.getElementById('landing')?.remove();
+  document.getElementById('app').hidden = false;
+} else {
+  document.getElementById('app')?.remove();
+}
+
+const { createMemoryAdapter } = await import('/src/storage/adapter.js');
+const { createRepository } = await import('/src/storage/repository.js');
+const { createStore, DEFAULT_PREFS } = await import('/src/state/store.js');
+const { createCoverCache } = await import('/src/ui/cover-urls.js');
+const { createApp } = await import('/src/ui/app.js');
+const seed = await import('/src/data/seed-books.js');
+const theme = await import('/src/theme/theme-manager.js');
+const { loadPortraits } = await import('/src/data/portraits.js');
+
+await loadPortraits();
+const repo = createRepository(createMemoryAdapter());
+await repo.init({ seedBooks: seed.SEED_BOOKS, seedVersion: seed.SEED_VERSION, retiredKeys: seed.RETIRED_KEYS });
+
+const prefs = { ...DEFAULT_PREFS };
+if (params.get('theme')) {
+  // `theme` alone is not enough: applyPreferences re-resolves the palette
+  // from the APPEARANCE dial, and "system" in headless is always dark —
+  // so asking for the light palette and getting the dark one looked like
+  // light mode was broken when it had simply been overruled.
+  prefs.theme = params.get('theme');
+  const scheme = theme.THEMES[prefs.theme]?.scheme === 'light' ? 'light' : 'dark';
+  prefs.appearance = scheme;
+  if (scheme === 'light') prefs.themeLight = prefs.theme;
+  else prefs.themeDark = prefs.theme;
+}
+if (params.get('motion') === 'off') prefs.animations = false;
+theme.applyPreferences(prefs);
+
+if (wantLanding) {
+  const { mountLanding } = await import('/src/ui/landing.js');
+  mountLanding({ repo, onEnter() {} });
+  // The entrance fade would otherwise be caught mid-way.
+  document.querySelector('.lp')?.style.setProperty('animation', 'none');
+  await new Promise((r) => setTimeout(r, 700));
+  window.__ready = true;
+  document.title = 'ready';
+} else {
+
+const store = createStore({
+  prefs,
+  ready: true,
+  view: params.get('view') || 'library',
+  genre: params.get('genre') || '',
+  shelf: params.get('shelf') || 'all',
+  room: params.get('room') || null,
+  floor: Number(params.get('floor') || 0),
+});
+const cache = createCoverCache(repo);
+const app = createApp({ repo, store, cache });
+app.stage.setEnabled(prefs.animations !== false);
+app.render();
+
+// Give the layout, the cover cache and the camera a moment to settle.
+await new Promise((r) => setTimeout(r, 900));
+window.__ready = true;
+document.title = 'ready';
+
+}
+</script>
+</body></html>

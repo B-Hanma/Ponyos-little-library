@@ -1,0 +1,482 @@
+/* personality.css — the kitten, the celebrations, the mood check-in,
+   the recommendation cards and the achievement shelf. */
+
+/* ==========================================================
+   THE KITTEN
+
+   A small long-haired Persian, drawn from primitives in cat.js
+   and recoloured by whichever world is on stage. It replaced the
+   sea creature as the companion: the ocean is still the house
+   identity — the palette, the waves, the bubbles — but the thing
+   that follows her around is a cat.
+   ========================================================== */
+
+.cat { display: block; overflow: visible; }
+.cat__body { transform-origin: center; }
+
+/* ------------------------------------------------------------------
+   ALIVE — a blink, a tail, and a paw that waves.
+
+   Two fur-coloured lids sit parked above the eyes at scaleY(0) and drop
+   on an off-beat rhythm. The blink is deliberately fast (about 80ms of
+   the whole cycle) and the cycle length is a prime-ish number of
+   seconds, so two kittens on the same page never fall into step — a row
+   of creatures blinking in unison reads as a screensaver.
+
+   Everything animated here is transform or scale, both compositor-only,
+   and every one is switched off by the motion preference at the bottom
+   of this file.
+   ------------------------------------------------------------------ */
+.cat__lid {
+  transform-box: fill-box;
+  transform-origin: top center;
+  scale: 1 0;
+}
+.cat--alive .cat__lid { animation: cat-blink 6.7s ease-in-out infinite; }
+/* The second eye lags by a couple of frames, the way a real one does. */
+.cat--alive .cat__lid:nth-of-type(2) { animation-delay: .05s; }
+
+@keyframes cat-blink {
+  0%, 93%, 100% { scale: 1 0; }
+  95.5% { scale: 1 1; }
+  97.5% { scale: 1 0; }
+}
+
+/* The tail never quite stops. On EVERY kitten, not just the alive ones:
+   a cat with a rigid tail looks stuffed. */
+.cat__tail {
+  transform-box: fill-box;
+  transform-origin: 8% 92%;
+  animation: cat-tail 4.4s var(--ease-soft) infinite;
+}
+@keyframes cat-tail {
+  0%, 100% { rotate: -3deg; }
+  50%      { rotate: 7deg; }
+}
+
+/* The raised paw, drawn on top of the resting body. */
+.cat__wave {
+  transform-box: fill-box;
+  transform-origin: 30% 80%;
+  animation: cat-wave 2.4s var(--ease-soft) infinite;
+}
+@keyframes cat-wave {
+  0%, 56%, 100% { rotate: 0deg; }
+  64% { rotate: -24deg; }
+  72% { rotate: 8deg; }
+  80% { rotate: -15deg; }
+}
+
+.cat--alive .cat__body { animation: cat-breathe 4.6s var(--ease-soft) infinite alternate; }
+@keyframes cat-breathe {
+  from { transform: translateY(0) scale(1); }
+  to   { transform: translateY(-5px) scale(1.015); }
+}
+
+/* Sitting on a shelf header, small. */
+.cat--shelf { animation: cat-breathe 5.2s var(--ease-soft) infinite alternate; }
+
+/* Coming round the edge of something. */
+.cat--peek { animation: cat-peek 900ms var(--ease-out); }
+@keyframes cat-peek {
+  from { transform: translateY(26px) scale(.9); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+/* the corner companion */
+#mascot-corner {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: 46;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity var(--t-mid) var(--ease-out), transform var(--t-mid) var(--ease-out);
+}
+#mascot-corner.is-showing { opacity: 1; transform: none; }
+#mascot-corner .cat { animation: cat-breathe 4.2s var(--ease-soft) infinite alternate; }
+
+.mascot-corner__bubble {
+  order: -1;
+  max-width: 15rem;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-lg) var(--r-lg) 2px var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  line-height: 1.45;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+@media (max-width: 1024px) {
+  #mascot-corner { right: var(--sp-3); bottom: calc(var(--tabbar-h) + var(--sp-3)); }
+  .mascot-corner__bubble { max-width: 11rem; font-size: var(--step--2); }
+}
+
+/* ==========================================================
+   CELEBRATION
+   ========================================================== */
+
+.celebrate {
+  position: fixed;
+  inset: 0;
+  z-index: 92;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+}
+.celebrate__bits { position: absolute; inset: 0; overflow: hidden; }
+.celebrate__bits > i {
+  position: absolute;
+  bottom: -10%;
+  display: block;
+  animation: celebrate-rise var(--dur) var(--ease-out) var(--delay) forwards;
+}
+.celebrate__bubble {
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, rgb(var(--world-glow) / .75), rgb(var(--world-glow) / .12) 62%);
+  border: 1px solid rgb(var(--world-glow) / .4);
+}
+.celebrate__page {
+  border-radius: 2px 6px 2px 6px;
+  background: color-mix(in oklab, var(--surface) 70%, white);
+  box-shadow: var(--shadow-1);
+}
+@keyframes celebrate-rise {
+  from { transform: translate3d(0, 0, 0) rotate(0); opacity: 0; }
+  15%  { opacity: 1; }
+  to   { transform: translate3d(var(--drift), -108vh, 0) rotate(var(--spin)); opacity: 0; }
+}
+
+.celebrate__card {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-xl);
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-3);
+  text-align: center;
+  animation: celebrate-pop 2600ms var(--ease-out) forwards;
+  max-width: min(90vw, 26rem);
+}
+@keyframes celebrate-pop {
+  0%   { opacity: 0; transform: scale(.85) translateY(14px); }
+  12%  { opacity: 1; transform: scale(1.03) translateY(0); }
+  20%  { transform: scale(1); }
+  82%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(.97) translateY(-10px); }
+}
+.celebrate__mascot { margin-bottom: var(--sp-1); }
+.celebrate__line {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  color: var(--accent-text);
+  text-wrap: balance;
+}
+.celebrate__title { font-size: var(--step--1); color: var(--text-dim); }
+
+/* heart sparkle */
+.sparkle { position: fixed; z-index: 92; pointer-events: none; }
+.sparkle > i {
+  position: absolute;
+  width: 6px; height: 6px;
+  margin: -3px;
+  border-radius: 50%;
+  background: #ff7b96;
+  animation: sparkle-out 700ms var(--ease-out) var(--delay) forwards;
+}
+@keyframes sparkle-out {
+  from { transform: rotate(var(--a)) translateX(0) scale(1); opacity: 1; }
+  to   { transform: rotate(var(--a)) translateX(var(--d)) scale(0); opacity: 0; }
+}
+
+/* ==========================================================
+   MOOD CHECK-IN
+   ========================================================== */
+
+.mood-card {
+  position: relative;
+  overflow: hidden;
+  padding: var(--sp-6);
+  border-radius: var(--r-xl);
+  border: 1px solid var(--accent-line);
+  background:
+    radial-gradient(120% 140% at 12% 0%, var(--accent-soft), transparent 62%),
+    color-mix(in oklab, var(--surface) 80%, transparent);
+  margin-bottom: var(--sp-6);
+}
+.mood-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+  flex-wrap: wrap;
+}
+.mood-card__title {
+  font-size: var(--step-3);
+  font-weight: 500;
+  letter-spacing: -.02em;
+}
+.mood-card__sub {
+  font-family: var(--font-display);
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: var(--step-0);
+}
+.mood-card__mascot { flex-shrink: 0; }
+
+.mood-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+.mood-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: .5rem .9rem;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--step--1);
+  font-weight: 550;
+  transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast),
+              background-color var(--t-fast), color var(--t-fast);
+}
+.mood-chip:hover { transform: translateY(-2px); border-color: var(--accent-line); color: var(--text); }
+.mood-chip.is-on {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  box-shadow: 0 6px 18px -8px var(--accent-line);
+}
+.mood-chip__emoji { font-size: 1.05rem; line-height: 1; }
+
+.mood-tell {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.mood-tell .input { flex: 1 1 16rem; }
+
+.mood-verdict {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--border-soft);
+}
+.mood-verdict__line {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  color: var(--accent-text);
+  margin-bottom: var(--sp-4);
+  text-wrap: balance;
+}
+
+/* recommendation strip */
+.recs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--sp-4);
+}
+.rec {
+  display: flex;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  text-align: left;
+  transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast);
+}
+.rec:hover { transform: translateY(-3px); border-color: var(--accent-line); }
+.rec__cover {
+  flex-shrink: 0;
+  width: 54px;
+  aspect-ratio: 2/3;
+  border-radius: 2px 5px 5px 2px;
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+.rec__cover img, .rec__cover svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rec__body { display: grid; align-content: start; gap: 2px; min-width: 0; }
+.rec__title {
+  font-family: var(--font-display);
+  font-size: var(--step--1);
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rec__author { font-size: var(--step--2); color: var(--text-mute); }
+.rec__why {
+  margin-top: 3px;
+  font-size: var(--step--2);
+  color: var(--accent-text);
+  font-style: italic;
+  font-family: var(--font-display);
+}
+
+/* ==========================================================
+   SURPRISE ME
+   ========================================================== */
+
+.chaos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--sp-3);
+}
+.chaos {
+  display: grid;
+  gap: 3px;
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  text-align: left;
+  transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast);
+}
+.chaos:hover { transform: translateY(-3px); border-color: var(--accent-line); }
+.chaos__emoji { font-size: 1.4rem; }
+.chaos__label { font-weight: 600; font-size: var(--step-0); }
+.chaos__line { font-size: var(--step--2); color: var(--text-mute); font-style: italic; }
+
+/* ==========================================================
+   ACHIEVEMENTS
+   ========================================================== */
+
+.achievements {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--sp-3);
+}
+.ach {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  opacity: .42;
+  filter: grayscale(1);
+  transition: opacity var(--t-mid), filter var(--t-mid), border-color var(--t-mid);
+}
+.ach.is-earned { opacity: 1; filter: none; border-color: var(--accent-line); }
+.ach__icon {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--surface-3);
+  font-size: 1.05rem;
+}
+.ach.is-earned .ach__icon { background: var(--accent-soft); }
+.ach__body { display: grid; gap: 1px; }
+.ach__name { font-weight: 600; font-size: var(--step--1); }
+.ach__blurb { font-size: var(--step--2); color: var(--text-mute); line-height: 1.45; }
+
+/* ==========================================================
+   THE TBR PILE
+   ========================================================== */
+
+.pile {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-5) 0 var(--sp-4);
+}
+.pile__stack { display: grid; }
+.pile__book {
+  grid-area: 1 / 1;
+  height: 16px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--surface-3), color-mix(in oklab, var(--accent) 22%, var(--surface-3)));
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  transform: translateY(calc(var(--i) * -13px)) rotate(var(--r));
+  animation: pile-drop 500ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i) * 45ms);
+}
+@keyframes pile-drop {
+  from { transform: translateY(calc(var(--i) * -13px - 40px)) rotate(var(--r)); opacity: 0; }
+}
+.pile__count {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  color: var(--accent-text);
+}
+.pile__line { font-size: var(--step--1); color: var(--text-dim); font-style: italic; font-family: var(--font-display); }
+
+@media (prefers-reduced-motion: reduce) {
+  .celebrate__bits, .sparkle { display: none; }
+  .celebrate__card { animation: none; }
+  #mascot-corner .cat, .cat__tail, .cat__wave,
+  .cat--alive .cat__lid, .cat--alive .cat__body,
+  .cat--shelf, .cat--peek { animation: none !important; }
+  .pile__book { animation: none; }
+}
+[data-motion="off"] .celebrate__bits,
+[data-motion="off"] .sparkle { display: none; }
+[data-motion="off"] #mascot-corner .cat,
+[data-motion="off"] .cat__tail,
+[data-motion="off"] .cat__wave,
+[data-motion="off"] .cat--alive .cat__lid,
+[data-motion="off"] .cat--alive .cat__body,
+[data-motion="off"] .cat--shelf,
+[data-motion="off"] .cat--peek { animation: none !important; }
+
+/* ==========================================================
+   MOBILE REFINEMENTS
+   ========================================================== */
+
+@media (max-width: 1024px) {
+  /* The dice keeps its place in the top bar but drops its label — it is
+     the one action worth reaching for one-handed, and the tab bar FAB
+     duplicates it anyway. */
+  .btn--surprise { padding: .5rem .7rem; }
+  .btn--surprise span:last-child { display: none; }
+
+  .mood-card { padding: var(--sp-4); border-radius: var(--r-lg); }
+  .mood-card__title { font-size: var(--step-2); }
+  .mood-card__head { gap: var(--sp-3); margin-bottom: var(--sp-4); }
+  .mood-card__mascot { width: 54px; height: 54px; }
+  .mood-chip { padding: .42rem .7rem; font-size: var(--step--2); }
+  .mood-tell .input { flex: 1 1 100%; }
+  .mood-tell .btn { width: 100%; }
+  .recs { grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
+  .rec { padding: var(--sp-2); gap: var(--sp-2); }
+  .rec__cover { width: 42px; }
+  .mood-verdict__line { font-size: var(--step-1); }
+}
+
+@media (max-width: 480px) {
+  .recs { grid-template-columns: 1fr; }
+  .chaos-grid, .achievements { grid-template-columns: 1fr; }
+}
+
+/* ── the kitten on a shelf header ─────────────────────────────────
+   Small, in that genre's mood, and sitting on the plank rather than
+   floating over the title. It hides on narrow screens: a phone shelf
+   header has room for a name and a count, and nothing else. */
+.cat--shelf {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  margin-right: calc(var(--sp-1) * -1);
+  opacity: .92;
+}
+@media (max-width: 640px) { .cat--shelf { display: none; } }

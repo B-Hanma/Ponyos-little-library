@@ -1,0 +1,342 @@
+/* ============================================================
+   tokens.css — the whole visual language lives here.
+
+   Two independent layers:
+     [data-theme]  base palette   (ocean | light | dark | library)
+     [data-mood]   genre overlay  (tide | ember | noir | arcane | ...)
+
+   A mood only ever overrides accents and tints, never the base
+   surfaces. That is what lets the page re-tint smoothly when she
+   wanders onto the mystery shelf instead of repainting itself.
+   ============================================================ */
+
+:root {
+  /* --- type --- */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --font-reading: var(--font-body);   /* swapped by the font preference */
+
+  /* --- the hand ---------------------------------------------------
+     A script face is now used ONLY for short decorative asides at small
+     sizes: a sign-off, a caption on a frame, a label on a floor plan.
+     It is deliberately no longer used for any heading.
+
+     WHY IT WAS DEMOTED
+     The greeting used to be set in this, and a script capital H is the
+     single worst glyph to build a page around. Script faces switch in
+     swashed alternates at display size; the swash on an H runs right
+     through the letter beside it, and because the greeting is also
+     painted with a gradient clipped to the glyphs, any stroke that
+     overhangs its own advance width gets shaved off at the box edge.
+     Between the two, "Hello" could lose most of its H. Turning the
+     OpenType features off helps but does not fix the second half, and
+     which face actually renders depends on the machine — so the honest
+     fix was to stop setting headings in a script face at all.
+
+     Gabriola, Snell Roundhand and Apple Chancery are all deliberately
+     absent: heavy contextual swashes, high stroke contrast, and in
+     Snell's case an H whose entry stroke starts left of the origin.
+     What is left behaves at any size. All system fonts, so this still
+     works with no connection. */
+  --font-hand: "Segoe Script", "Bradley Hand", "Segoe Print", "Trebuchet MS",
+               "Lucida Handwriting", cursive;
+
+  /* Headings and book titles. An elegant serif, per the rule that
+     decorative faces never carry structural text. */
+  --font-title: var(--font-display);
+
+  --step--2: clamp(.69rem, .67rem + .1vw, .75rem);
+  --step--1: clamp(.81rem, .78rem + .14vw, .875rem);
+  --step-0:  clamp(.94rem, .91rem + .16vw, 1rem);
+  --step-1:  clamp(1.1rem, 1.04rem + .3vw, 1.25rem);
+  --step-2:  clamp(1.32rem, 1.2rem + .55vw, 1.62rem);
+  --step-3:  clamp(1.6rem, 1.36rem + 1.05vw, 2.2rem);
+  --step-4:  clamp(2rem, 1.5rem + 2.2vw, 3.4rem);
+  --step-5:  clamp(2.6rem, 1.6rem + 4.2vw, 5rem);
+
+  /* --- space / shape --- */
+  --sp-1: .25rem;  --sp-2: .5rem;   --sp-3: .75rem;  --sp-4: 1rem;
+  --sp-5: 1.5rem;  --sp-6: 2rem;    --sp-7: 3rem;    --sp-8: 4.5rem;
+  --r-sm: 6px; --r-md: 12px; --r-lg: 18px; --r-xl: 28px; --r-pill: 999px;
+
+  --shell: 1320px;
+  --topbar-h: 68px;
+  --rail-w: 86px;
+  --tabbar-h: 62px;
+
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-soft: cubic-bezier(.4, .14, .3, 1);
+  --t-fast: 140ms;
+  --t-mid: 280ms;
+  --t-slow: 700ms;
+  --t-mood: 900ms;   /* how long a genre mood takes to wash over the page */
+}
+
+/* -------------------------  BASE THEMES  ------------------------- */
+
+/* Ocean - evening at the bottom of the sea. The default. */
+:root,
+[data-theme="ocean"] {
+  --bg:        #07161f;
+  --bg-deep:   #040e15;
+  --surface:   #0e2533;
+  --surface-2: #143143;
+  --surface-3: #1b3e53;
+  --border:    #1e4358;
+  --border-soft: #17364a;
+
+  --text:      #eaf4f6;
+  --text-dim:  #a6c3cd;
+  --text-mute: #6e8f9c;
+
+  --shadow-1: 0 1px 2px rgb(2 10 16 / .5);
+  --shadow-2: 0 10px 30px -12px rgb(2 10 16 / .75);
+  --shadow-3: 0 30px 70px -28px rgb(1 7 12 / .9);
+
+  --paper: #0e2533;
+  --spine-shade: rgb(0 0 0 / .32);
+  --scrim: rgb(3 12 18 / .72);
+}
+
+/* Light - pearl, sea glass, morning. */
+[data-theme="light"] {
+  --bg:        #f6f3ec;
+  --bg-deep:   #ece6da;
+  --surface:   #fffdf8;
+  --surface-2: #f4efe4;
+  --surface-3: #e9e2d3;
+  --border:    #ddd3c1;
+  --border-soft: #e8e0d1;
+
+  --text:      #1d2a30;
+  --text-dim:  #4f6570;
+  --text-mute: #7d9099;
+
+  --shadow-1: 0 1px 2px rgb(60 50 35 / .1);
+  --shadow-2: 0 12px 28px -14px rgb(60 50 35 / .3);
+  --shadow-3: 0 30px 60px -30px rgb(60 50 35 / .38);
+
+  --paper: #fffdf8;
+  --spine-shade: rgb(0 0 0 / .14);
+  --scrim: rgb(40 34 26 / .42);
+}
+
+/* Dark - plain, quiet, for reading at 2am. */
+[data-theme="dark"] {
+  --bg:        #101012;
+  --bg-deep:   #08080a;
+  --surface:   #1a1a1e;
+  --surface-2: #232329;
+  --surface-3: #2d2d34;
+  --border:    #33333c;
+  --border-soft: #26262d;
+
+  --text:      #ecebe8;
+  --text-dim:  #a8a7a2;
+  --text-mute: #74736f;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .6);
+  --shadow-2: 0 12px 30px -14px rgb(0 0 0 / .8);
+  --shadow-3: 0 30px 70px -28px rgb(0 0 0 / .95);
+
+  --paper: #1a1a1e;
+  --spine-shade: rgb(0 0 0 / .4);
+  --scrim: rgb(0 0 0 / .74);
+}
+
+/* Warm library - lamplight, old wood, a blanket. */
+[data-theme="library"] {
+  --bg:        #22170f;
+  --bg-deep:   #170f09;
+  --surface:   #31221a;
+  --surface-2: #3d2b20;
+  --surface-3: #4a3529;
+  --border:    #533c2d;
+  --border-soft: #402d22;
+
+  --text:      #f6e9d8;
+  --text-dim:  #cdb49a;
+  --text-mute: #9a8068;
+
+  --shadow-1: 0 1px 2px rgb(15 8 4 / .55);
+  --shadow-2: 0 12px 30px -14px rgb(15 8 4 / .8);
+  --shadow-3: 0 30px 70px -28px rgb(10 5 2 / .92);
+
+  --paper: #31221a;
+  --spine-shade: rgb(20 10 4 / .35);
+  --scrim: rgb(18 10 5 / .74);
+}
+
+/* Parchment - old paper and ink, read by a window. The light-mode
+   partner to Warm library, so "follow the system" has somewhere warm to
+   go in the daytime instead of jumping to a cold white. */
+[data-theme="parchment"] {
+  --bg:        #efe6d2;
+  --bg-deep:   #e2d6bd;
+  --surface:   #faf4e5;
+  --surface-2: #eee4cd;
+  --surface-3: #e2d5b9;
+  --border:    #cfbe9c;
+  --border-soft: #ddceb0;
+
+  --text:      #2c2216;
+  --text-dim:  #5d4d38;
+  --text-mute: #8b7a5f;
+
+  --shadow-1: 0 1px 2px rgb(80 62 34 / .12);
+  --shadow-2: 0 12px 28px -14px rgb(80 62 34 / .32);
+  --shadow-3: 0 30px 60px -30px rgb(70 54 28 / .4);
+
+  --paper: #faf4e5;
+  --spine-shade: rgb(60 44 20 / .16);
+  --scrim: rgb(52 42 26 / .44);
+}
+
+/* --- the world stage ---
+   Genre scenery is drawn with two channels:
+     --world-ink   line work and silhouettes; follows the THEME, so it is
+                   light on a dark page and dark on a light one
+     --world-glow  the light in the scene; follows the MOOD
+     --world-bg    the page ground, for punching holes (a moon crescent)
+   Values are bare RGB triples so the scenes can pick their own alpha. */
+:root,
+[data-theme="ocean"]   { --world-ink: 214 236 241; --world-bg: 7 22 31; }
+[data-theme="dark"]    { --world-ink: 226 226 222; --world-bg: 16 16 18; }
+[data-theme="library"] { --world-ink: 246 233 216; --world-bg: 34 23 15; }
+[data-theme="light"]   { --world-ink: 42 62 71;    --world-bg: 246 243 236; }
+[data-theme="parchment"] { --world-ink: 74 58 34;  --world-bg: 239 230 210; }
+
+/* -------------------------  GENRE MOODS  -------------------------
+   Each mood sets an accent pair, the two ambient glows, and the light
+   its world is lit by. Moods are additive, never structural. */
+
+/* The house mood, declared on :root as well as on [data-mood="tide"].
+   Without this, every accent token is undefined until something sets the
+   attribute — and an undefined custom property does not fall back, it
+   invalidates the whole declaration that used it. The failure is silent
+   and specific: a rule like
+       background: linear-gradient(90deg, var(--accent-2), var(--accent))
+   computes to `none` and the element simply is not there, with no error
+   and nothing in the inspector to point at. index.html ships
+   data-mood="tide" so this never bit the app in the browser, but "works
+   because of an attribute in the HTML" is not a foundation. */
+:root {
+  --accent:      #ff6f61;
+  --accent-2:    #7fd8d0;
+  --accent-ink:  #2a0d09;
+  --glow-a: rgb(127 216 208 / .16);
+  --glow-b: rgb(255 111 97 / .13);
+  --world-glow: 127 216 208;
+  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in oklab, var(--accent) 45%, transparent);
+  --accent-text: color-mix(in oklab, var(--accent) 86%, var(--text));
+  --on-accent: var(--accent-ink);
+}
+
+[data-mood="tide"] {            /* literary fiction, everything, home */
+  --accent:      #ff6f61;
+  --accent-2:    #7fd8d0;
+  --accent-ink:  #2a0d09;
+  --glow-a: rgb(127 216 208 / .16);
+  --glow-b: rgb(255 111 97 / .13);
+  --world-glow: 127 216 208;
+}
+[data-mood="ember"] {           /* romance, emotional fiction */
+  --accent:      #ff7b96;
+  --accent-2:    #ffc4a3;
+  --accent-ink:  #3a0d1a;
+  --glow-a: rgb(255 123 150 / .2);
+  --glow-b: rgb(255 196 163 / .15);
+  --world-glow: 255 155 175;
+}
+[data-mood="noir"] {            /* mystery, thriller, crime */
+  --accent:      #8fb3d9;
+  --accent-2:    #d9c38f;
+  --accent-ink:  #07121d;
+  --glow-a: rgb(143 179 217 / .14);
+  --glow-b: rgb(217 195 143 / .09);
+  --world-glow: 158 194 228;
+}
+[data-mood="arcane"] {          /* fantasy, sci-fi, dystopian */
+  --accent:      #b39cf5;
+  --accent-2:    #7fe3d0;
+  --accent-ink:  #190c35;
+  --glow-a: rgb(179 156 245 / .2);
+  --glow-b: rgb(127 227 208 / .14);
+  --world-glow: 189 168 255;
+}
+[data-mood="clarity"] {         /* psychology, science, self-help */
+  --accent:      #67c4d8;
+  --accent-2:    #9fd6a8;
+  --accent-ink:  #052029;
+  --glow-a: rgb(103 196 216 / .13);
+  --glow-b: rgb(159 214 168 / .1);
+  --world-glow: 118 208 226;
+}
+[data-mood="washi"] {           /* japanese and korean literature */
+  --accent:      #d98b7a;
+  --accent-2:    #a8b89a;
+  --accent-ink:  #2a1410;
+  --glow-a: rgb(217 139 122 / .13);
+  --glow-b: rgb(168 184 154 / .12);
+  --world-glow: 232 164 148;
+}
+[data-mood="hollow"] {          /* horror */
+  --accent:      #c96a63;
+  --accent-2:    #7e8a8f;
+  --accent-ink:  #16080a;
+  --glow-a: rgb(201 106 99 / .14);
+  --glow-b: rgb(126 138 143 / .08);
+  --world-glow: 226 196 140;
+}
+[data-mood="ledger"] {          /* economics, business, politics */
+  --accent:      #e3b04b;
+  --accent-2:    #83b8a8;
+  --accent-ink:  #2a1e05;
+  --glow-a: rgb(227 176 75 / .14);
+  --glow-b: rgb(131 184 168 / .11);
+  --world-glow: 240 196 96;
+}
+[data-mood="foxed"] {           /* classics, mythology, history */
+  --accent:      #cf9b6e;
+  --accent-2:    #9fb4bd;
+  --accent-ink:  #2a1a0c;
+  --glow-a: rgb(207 155 110 / .15);
+  --glow-b: rgb(159 180 189 / .1);
+  --world-glow: 224 176 128;
+}
+[data-mood="sunny"] {           /* children's, humour */
+  --accent:      #f2b544;
+  --accent-2:    #7fd8d0;
+  --accent-ink:  #2e1d00;
+  --glow-a: rgb(242 181 68 / .18);
+  --glow-b: rgb(127 216 208 / .12);
+  --world-glow: 252 206 106;
+}
+
+[data-mood="cosmos"] {          /* science */
+  --accent:      #86a8ff;
+  --accent-2:    #9fe0c8;
+  --accent-ink:  #060d26;
+  --glow-a: rgb(134 168 255 / .16);
+  --glow-b: rgb(159 224 200 / .12);
+  --world-glow: 150 182 255;
+}
+
+/* Derived accent helpers.
+   Declared on [data-mood] rather than :root so they recompute wherever a
+   mood is re-declared — which is how each genre shelf can carry its own
+   accent while the page as a whole stays in one key. */
+[data-mood] {
+  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in oklab, var(--accent) 45%, transparent);
+  --accent-text: color-mix(in oklab, var(--accent) 86%, var(--text));
+  --on-accent: var(--accent-ink);
+}
+
+/* --- preferences toggled from Settings --- */
+[data-reading-font="serif"] { --font-reading: var(--font-display); }
+[data-reading-font="sans"]  { --font-reading: var(--font-body); }
+[data-text-size="cozy"]     { font-size: 106%; }
+[data-text-size="large"]    { font-size: 113%; }
