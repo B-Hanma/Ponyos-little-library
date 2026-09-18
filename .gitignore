@@ -173,3 +173,12 @@ npm-debug.log*
 #                        after a network fetch and three passes of
 #                        manual correction. It is not reproducible from
 #                        source alone, so it is tracked as data.
+
+# ── Tauri desktop shell ─────────────────────────────────────────
+# Rust build output, the staged frontend copy, and the icon set that
+# CI generates from assets/favicon.svg. All three are derived; none of
+# them is source.
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/icons/
+/dist/

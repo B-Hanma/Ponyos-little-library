@@ -1,0 +1,27 @@
+[package]
+name = "ponyos-little-library"
+version = "0.1.0"
+description = "A small, private library made for one reader."
+edition = "2021"
+rust-version = "1.77"
+
+# The binary name, kept plain and ASCII. The window and the .app bundle
+# are called "Ponyo's Little Library" — that is `productName` in
+# tauri.conf.json, and it is the only name she ever sees.
+[[bin]]
+name = "ponyos-little-library"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# The only plugin. Everything the app stores goes through this, and the
+# capability file limits it to the app's own data directory.
+tauri-plugin-fs = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

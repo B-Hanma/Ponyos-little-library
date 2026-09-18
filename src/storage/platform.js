@@ -10,9 +10,9 @@
  *   desktop  →  migrate if needed, then the filesystem
  *
  * ── TAURI DETECTION LIVES HERE AND NOWHERE ELSE ───────────────────
- * Exactly one expression in the codebase reads `window.__TAURI__`, and
- * it is `isDesktop()` below. If the desktop shell is ever replaced with
- * something else, this file changes and nothing else does.
+ * Every reference to `window.__TAURI__` in the codebase is in this file.
+ * If the desktop shell is ever replaced with something else, this file
+ * changes and nothing else does.
  *
  * The Tauri APIs are read off the global rather than imported, because
  * this project has no build step and is not getting one for this. With
@@ -28,6 +28,7 @@
  * else depends on being right about Tauri.
  */
 
+import { StorageUnavailableError } from './adapter.js';
 import { createIndexedDbAdapter } from './indexeddb-adapter.js';
 import { createFsAdapter } from './fs-adapter.js';
 import { runMigration, readMigrationState } from './migrate.js';
@@ -35,9 +36,24 @@ import { runMigration, readMigrationState } from './migrate.js';
 /** Where the library lives inside the app's own data directory. */
 export const LIBRARY_ROOT = 'library';
 
-/** Is this the desktop build? */
+/**
+ * Are we inside the desktop shell?
+ *
+ * `__TAURI_INTERNALS__` is present in every Tauri webview whether or not
+ * any plugin loaded, which is what makes it the right thing to ask.
+ * Asking for `__TAURI__.fs` instead would answer "no" when the shell is
+ * running but the filesystem plugin failed to inject — and "no" means
+ * IndexedDB, so her library would be written into the webview's database
+ * where the desktop app would never look for it again. A blank library
+ * that saves happily is worse than an error, so the error is below.
+ */
 export function isDesktop() {
-  return typeof globalThis !== 'undefined' && Boolean(globalThis.__TAURI__?.fs);
+  return typeof globalThis !== 'undefined' && Boolean(globalThis.__TAURI_INTERNALS__);
+}
+
+/** Is the filesystem plugin actually there? */
+function hasFsPlugin() {
+  return Boolean(globalThis.__TAURI__?.fs?.BaseDirectory);
 }
 
 /**
@@ -95,6 +111,11 @@ export async function createStorage({
     return { adapter: createIndexedDbAdapter(), mode: 'indexeddb', migration: null };
   }
 
+  if (!fs && !hasFsPlugin()) {
+    throw new StorageUnavailableError(
+      'The desktop app started without its filesystem, so there is nowhere safe to keep the library.',
+    );
+  }
   const backend = fs || createTauriFileSystem();
 
   // One decision, made once, on the evidence on disk: is there already

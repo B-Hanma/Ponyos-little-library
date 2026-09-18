@@ -1,0 +1,134 @@
+name: macOS build
+
+# Builds the Apple Silicon .app. Nothing here signs with a paid Apple
+# Developer identity — the bundle is ad-hoc signed, which is free and is
+# enough for handing the app over directly. It is NOT notarized, so a
+# copy that travels through a browser download or a mail attachment will
+# still be quarantined by Gatekeeper on first open.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'styles/**'
+      - 'assets/**'
+      - 'index.html'
+      - 'src-tauri/**'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Apple Silicon (aarch64-apple-darwin)
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Stage the frontend
+        run: bash src-tauri/sync-frontend.sh
+
+      - name: Generate the app icons
+        run: npx --yes '@tauri-apps/cli@^2' icon assets/favicon.svg
+
+      - name: Build
+        run: npx --yes '@tauri-apps/cli@^2' build --target aarch64-apple-darwin --verbose
+
+      # ── what actually came out ──
+      #
+      # Checked rather than assumed: a bundle whose executable is missing
+      # still produces a .app-shaped directory, and `codesign --verify`
+      # is the difference between "ad-hoc signed" and "we said it was".
+      - name: Inspect the bundle
+        run: |
+          set -euo pipefail
+          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Ponyo's Little Library.app"
+          test -d "$app"
+          bin="$app/Contents/MacOS/ponyos-little-library"
+          test -x "$bin"
+          echo "--- architecture ---"
+          file "$bin"
+          lipo -info "$bin"
+          echo "--- signature ---"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dvv "$app" 2>&1 | head -20
+          echo "--- the frontend really is inside it ---"
+          # Tauri v2 EMBEDS frontendDist into the executable at compile
+          # time; there are no loose files under Resources to look for.
+          # Her artwork is 14 MB of PNG and JPEG, which does not
+          # meaningfully compress, so a binary that came out small is a
+          # binary that bundled an empty dist/ — the exact failure a
+          # broken sync-frontend.sh would produce, and one that otherwise
+          # only shows up as a blank window on her Mac.
+          size=$(stat -f%z "$bin")
+          echo "executable: $size bytes"
+          test "$size" -gt 5000000 || {
+            echo "executable is too small to contain the frontend"; exit 1; }
+          echo "--- size ---"
+          du -sh "$app"
+
+      # A real launch, bounded and non-fatal. A CI runner is not a desk,
+      # so a failure here is not proof the app is broken — but a success
+      # IS proof it starts, which is worth more than another static check.
+      - name: Try launching it
+        id: launch
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Ponyo's Little Library.app"
+          "$app/Contents/MacOS/ponyos-little-library" > launch.log 2>&1 &
+          pid=$!
+          sleep 25
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "still running after 25s"
+            echo "result=started" >> "$GITHUB_OUTPUT"
+            kill "$pid" 2>/dev/null || true
+          else
+            wait "$pid" || true
+            echo "exited early"
+            echo "result=exited" >> "$GITHUB_OUTPUT"
+          fi
+          echo "--- output ---"
+          cat launch.log || true
+
+      - name: Say plainly whether it ran
+        run: |
+          echo "launch result: ${{ steps.launch.outputs.result || 'unknown' }}"
+          echo "A result of 'started' means the process stayed alive for 25s on a"
+          echo "headless runner. It is not a test of the library's behaviour."
+
+      # ditto, not zip: it preserves the resource forks and the code
+      # signature. A plain zip can invalidate an ad-hoc signature.
+      - name: Package the .app
+        run: |
+          set -euo pipefail
+          cd "src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "Ponyo's Little Library.app" "PonyosLittleLibrary-aarch64.app.zip"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonyosLittleLibrary-aarch64-app
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/PonyosLittleLibrary-aarch64.app.zip
+          if-no-files-found: error
+          retention-days: 30

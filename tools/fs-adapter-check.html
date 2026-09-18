@@ -874,6 +874,18 @@ async function platformSuite() {
   await desktop.adapter.open();
   ok((await desktop.adapter.list(COLLECTIONS.BOOKS)).length === 0, 'which starts empty');
 
+  scenario('a desktop shell with no filesystem plugin fails loudly');
+  {
+    // If the fs plugin's script did not inject, falling back to
+    // IndexedDB would write her library into the webview's database,
+    // where the desktop app would never look for it again. It would
+    // look like it was working right up until it wasn't.
+    const refused = await rejects(() => createStorage({ desktop: true }));
+    ok(refused.threw, 'it refuses to start rather than quietly using the wrong storage');
+    ok(refused.name === 'StorageUnavailableError', 'as a storage error', refused.name);
+    ok(/filesystem/i.test(refused.message), 'that says what is missing', refused.message.slice(0, 60));
+  }
+
   const second = await createStorage({ desktop: true, fs, root: 'lib' });
   ok(second.migration.mode === 'adopted', 'and the next launch adopts it', second.migration.mode);
 
