@@ -61,7 +61,11 @@ jobs:
       - name: Inspect the bundle
         run: |
           set -euo pipefail
-          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Ponyo's Little Library.app"
+          # Found by glob rather than by name. The bundle is named after
+          # productName, and hardcoding that here is what turns a rename
+          # into a broken workflow.
+          app=$(find "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -maxdepth 1 -name '*.app' | head -1)
+          test -n "$app"
           test -d "$app"
           bin="$app/Contents/MacOS/ponyos-little-library"
           test -x "$bin"
@@ -94,7 +98,11 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
-          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Ponyo's Little Library.app"
+          # Found by glob rather than by name. The bundle is named after
+          # productName, and hardcoding that here is what turns a rename
+          # into a broken workflow.
+          app=$(find "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -maxdepth 1 -name '*.app' | head -1)
+          test -n "$app"
           "$app/Contents/MacOS/ponyos-little-library" > launch.log 2>&1 &
           pid=$!
           sleep 25
@@ -122,8 +130,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          app=$(find . -maxdepth 1 -name '*.app' | head -1)
+          test -n "$app"
           ditto -c -k --sequesterRsrc --keepParent \
-            "Ponyo's Little Library.app" "PonyosLittleLibrary-aarch64.app.zip"
+            "$app" "PonyosLittleLibrary-aarch64.app.zip"
 
       - name: Upload
         uses: actions/upload-artifact@v4

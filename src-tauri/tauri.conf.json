@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Ponyo's Little Library",
+  "productName": "Ponyo’s Little Library",
   "version": "0.1.0",
   "identifier": "com.ponyo.little-library",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Ponyo's Little Library",
+        "title": "Ponyo’s Little Library",
         "width": 1280,
         "height": 860,
         "minWidth": 380,
