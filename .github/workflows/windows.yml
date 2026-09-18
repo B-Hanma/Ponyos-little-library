@@ -1,0 +1,216 @@
+name: Windows build
+
+# Builds the x64 NSIS installer. The macOS workflow is untouched; the
+# only shared configuration is src-tauri/tauri.conf.json, where the
+# Windows settings live under bundle.windows and change nothing macOS
+# reads. The bundle target is chosen here with --bundles rather than in
+# the config, so `targets: ["app"]` stays exactly as macOS left it.
+#
+# The installer is unsigned. Windows SmartScreen will warn on first run
+# of an unsigned installer from an unknown publisher; a code-signing
+# certificate is a paid, identity-verified purchase and is deliberately
+# not part of this milestone.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'styles/**'
+      - 'assets/**'
+      - 'index.html'
+      - 'src-tauri/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: x64 installer (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The same script macOS uses. Git Bash ships on windows-latest, so
+      # there is one frontend staging mechanism rather than two that have
+      # to be kept in step.
+      - name: Stage the frontend
+        shell: bash
+        run: bash src-tauri/sync-frontend.sh
+
+      - name: Generate the app icons
+        shell: bash
+        run: npx --yes '@tauri-apps/cli@^2' icon assets/favicon.svg
+
+      - name: Build
+        shell: bash
+        run: npx --yes '@tauri-apps/cli@^2' build --target x86_64-pc-windows-msvc --bundles nsis --verbose
+
+      - name: Inspect what was produced
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
+          $setup = Get-ChildItem -Path $bundle -Filter '*-setup.exe' -ErrorAction Stop | Select-Object -First 1
+          if (-not $setup) { throw 'no NSIS setup executable was produced' }
+          "installer: $($setup.Name)"
+          "size:      $([math]::Round($setup.Length / 1MB, 1)) MB"
+          "SETUP_NAME=$($setup.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # The frontend is embedded into the executable at compile time,
+          # so there are no loose asset files to look for. Her artwork is
+          # 14 MB of PNG and JPEG that does not meaningfully compress, so
+          # an executable that came out small is one that bundled an
+          # empty dist/ - the exact failure a broken sync-frontend.sh
+          # produces, and one that otherwise only shows up as a blank
+          # window after installation.
+          $exe = 'src-tauri/target/x86_64-pc-windows-msvc/release/ponyos-little-library.exe'
+          if (-not (Test-Path $exe)) { throw "the executable is missing: $exe" }
+          $size = (Get-Item $exe).Length
+          "executable: $size bytes"
+          if ($size -lt 5000000) { throw 'executable is too small to contain the frontend' }
+
+      # Installing it is the only way to find out whether the installer
+      # works. /S is NSIS's silent mode, and installMode currentUser
+      # means no elevation is needed.
+      - name: Install it silently
+        id: install
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-ChildItem -Path 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis' -Filter '*-setup.exe' | Select-Object -First 1
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -PassThru -Wait
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "the installer failed with $($p.ExitCode)" }
+
+          $installed = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Filter 'ponyos-little-library.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $installed) { throw 'installed, but the executable cannot be found under LOCALAPPDATA' }
+          "installed to: $($installed.FullName)"
+          "INSTALLED_EXE=$($installed.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "result=installed" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # A real launch, bounded and non-fatal. windows-latest has a
+      # desktop session and a preinstalled WebView2 runtime, so this is a
+      # more meaningful check here than the equivalent on the macOS
+      # runner - but a failure still is not proof the app is broken.
+      - name: Try launching it
+        id: launch
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $exe = $env:INSTALLED_EXE
+          if (-not $exe) {
+            $exe = (Resolve-Path 'src-tauri/target/x86_64-pc-windows-msvc/release/ponyos-little-library.exe').Path
+            "falling back to the unpacked executable"
+          }
+          "launching: $exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 25
+          if (-not $p.HasExited) {
+            "still running after 25s"
+            "result=started" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          } else {
+            "exited early with $($p.ExitCode)"
+            "result=exited" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Say plainly what happened
+        shell: pwsh
+        run: |
+          "install: $('${{ steps.install.outputs.result }}' -replace '^$','failed')"
+          "launch:  $('${{ steps.launch.outputs.result }}' -replace '^$','unknown')"
+          "A launch result of 'started' means the process stayed alive for 25s."
+          "It is not a test of the library's behaviour."
+
+      - name: Upload the installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonyosLittleLibrary-x64-setup
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  checks:
+    name: Browser and storage checks
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every harness loads the app from the local server, exactly as it
+      # does on the development machine. Nothing here is a CI-only copy
+      # of the suites.
+      - name: Start the library server
+        shell: pwsh
+        run: |
+          Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'serve.ps1', '-NoBrowser'
+          )
+          $ready = $false
+          foreach ($i in 1..30) {
+            try {
+              Invoke-WebRequest 'http://localhost:8765/index.html' -UseBasicParsing -TimeoutSec 2 | Out-Null
+              $ready = $true; break
+            } catch { Start-Sleep -Seconds 1 }
+          }
+          if (-not $ready) { throw 'the library server never came up on 8765' }
+          'server is up'
+
+      - name: Storage and backup suites
+        shell: pwsh
+        run: |
+          $suites = @(
+            'tools/fs-adapter-check.html',
+            'tools/backup-check.html',
+            'tools/compat-check.html',
+            'tools/backup-ui-check.html',
+            'tools/cover-check.html'
+          )
+          $failed = @()
+          foreach ($s in $suites) {
+            "===== $s ====="
+            & .\tools\run-async.ps1 -Harness $s
+            if ($LASTEXITCODE -ne 0) { $failed += $s }
+          }
+          if ($failed.Count) { throw "failing suites: $($failed -join ', ')" }
+
+      - name: Application suites
+        shell: pwsh
+        run: |
+          $failed = @()
+          '===== regress ====='
+          & .\tools\run-checks.ps1
+          if ($LASTEXITCODE -ne 0) { $failed += 'regress' }
+          '===== smoke ====='
+          & .\tools\run-checks.ps1 -Harness tools/smoke.html
+          if ($LASTEXITCODE -ne 0) { $failed += 'smoke' }
+          '===== catalogue ====='
+          & .\tools\run-checks.ps1 -Harness tools/catalogue-check.html
+          if ($LASTEXITCODE -ne 0) { $failed += 'catalogue' }
+          '===== responsive ====='
+          & .\tools\run-checks.ps1 -Harness tools/responsive.html -BudgetMs 260000 -TimeoutSec 320
+          if ($LASTEXITCODE -ne 0) { $failed += 'responsive' }
+          if ($failed.Count) { throw "failing suites: $($failed -join ', ')" }
