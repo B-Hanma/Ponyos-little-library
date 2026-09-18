@@ -47,6 +47,25 @@ $errPath = Join-Path $scratch 'dom.err'
 # error — which looks exactly like a broken harness. Clear the field.
 Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
+# ...and then WAIT for them to actually be gone.
+#
+# Stop-Process does not block. It asks Windows to terminate the process
+# and returns immediately, so the next few lines delete the profile
+# directory and launch a fresh Edge while the old one is still dying.
+# The new browser then hangs, produces an empty dump, and gets killed at
+# the timeout - which looks exactly like a broken harness and is not one.
+#
+# This is what the Application suites hit in CI: they run straight after
+# five run-async.ps1 Edge sessions, and only the FIRST suite failed,
+# which is the signature of debris rather than of a bad test.
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Process msedge -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+  Start-Sleep -Milliseconds 250
+}
+if (Get-Process msedge -ErrorAction SilentlyContinue) {
+  Write-Host '  (msedge processes are still alive after 15 s; continuing anyway)' -ForegroundColor DarkYellow
+}
+
 # Throw the browser profile away between runs.
 #
 # This is not tidiness. Edge caches the harness page AND every module it
@@ -80,9 +99,50 @@ try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
 $dom = Get-Content $dumpPath -Raw
 if ([string]::IsNullOrEmpty($dom)) {
   'EMPTY DUMP. Edge stderr:'
-  Get-Content $errPath -Tail 5
+  # 40 rather than 5: when this fires, the last five lines are always the
+  # same benign Chromium chatter (an Edge LLM notice on Server SKUs, a
+  # renderer task-provider warning) and whatever actually went wrong has
+  # already scrolled past.
+  Get-Content $errPath -Tail 40
   exit 1
 }
+
 $match = [regex]::Match($dom, '(?s)<pre id="out"[^>]*>(.*?)</pre>')
-if ($match.Success) { [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value) }
-else { 'NO REPORT ELEMENT; first 900 chars:'; $dom.Substring(0, [Math]::Min(900, $dom.Length)) }
+if (-not $match.Success) {
+  'NO REPORT ELEMENT; first 900 chars:'
+  $dom.Substring(0, [Math]::Min(900, $dom.Length))
+  exit 1
+}
+
+$report = [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
+$report
+
+# ---------------------------------------------------------------- grading
+#
+# Until now this script printed the report and stopped. It had exactly one
+# exit statement - the empty-dump branch above - so on success it fell off
+# the end and never set an exit code at all. PowerShell leaves
+# $LASTEXITCODE at its previous value in that case, which meant one real
+# failure marked every later suite as failed too, and, far worse, a suite
+# full of genuine FAIL lines returned whatever the last run happened to
+# leave behind. CI could not see a failing test.
+#
+# Every path below sets a code explicitly.
+#
+# -cmatch, not -match: PowerShell comparison operators are case-
+# INSENSITIVE by default, and "fallback" contains "fail".
+# '^\s*FAIL' catches all three spellings the harnesses emit: the per-check
+# 'FAIL  <label>', regress's 'N FAILURES', and smoke's 'N FAILURE(S)'.
+if ($report -cmatch '(?m)^\s*FAIL') { exit 1 }
+
+# A report can also be wrong by being short. Every harness ends with a
+# marker: regress prints both 'ALL PASS' and '<<END>>', smoke and
+# responsive print 'ALL PASS', and catalogue-check prints only '<<END>>'
+# because it has no pass/fail vocabulary of its own. Requiring one of the
+# two catches a run that died partway with nothing marked FAIL.
+if ($report -cnotmatch 'ALL PASS' -and $report -cnotmatch '<<END>>') {
+  Write-Host 'No completion marker in the report; it is truncated.' -ForegroundColor Red
+  exit 1
+}
+
+exit 0
