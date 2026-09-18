@@ -743,3 +743,98 @@
   letter-spacing: .06em;
   text-transform: uppercase;
 }
+
+/* ───────────────── backup and restore: steps and notices ─────────────────
+   Used only by the backup/restore dialogs. Named progress-step rather
+   than stage because .stage is already the cinematic genre banner in
+   views.css, and a list item inheriting that would be a full-bleed hero.
+   ------------------------------------------------------------------------ */
+
+.progress-steps {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-4);
+  padding: 0;
+  list-style: none;
+}
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--step--1);
+  color: var(--text-mute);
+  transition: color var(--t-mid) var(--ease-out);
+}
+.progress-step__mark {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  line-height: 1;
+}
+.progress-step.is-done { color: var(--text-dim); }
+.progress-step.is-done .progress-step__mark {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+.progress-step.is-active { color: var(--text); font-weight: 550; }
+.progress-step.is-active .progress-step__mark {
+  border-color: var(--accent);
+  /* A ring that breathes while the step is genuinely running. It is
+     driven by the stage the engine reports, never by a timer. */
+  animation: step-pulse 1.4s var(--ease-soft) infinite;
+}
+.progress-step.is-failed { color: #ff8b80; }
+.progress-step.is-failed .progress-step__mark {
+  border-color: #ff8b80;
+  color: #ff8b80;
+}
+
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50%      { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+
+/* The same dual contract the rest of the app uses: the OS setting and
+   her own switch both remove the movement. The step still reads as
+   active through colour and weight, so nothing is lost by stopping. */
+@media (prefers-reduced-motion: reduce) {
+  .progress-step.is-active .progress-step__mark { animation: none; }
+}
+[data-motion="off"] .progress-step.is-active .progress-step__mark { animation: none; }
+
+.notice {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  padding: var(--sp-3) var(--sp-4);
+  display: grid;
+  gap: var(--sp-2);
+}
+.notice__title { font-size: var(--step--1); font-weight: 600; line-height: 1.5; }
+.notice__body {
+  font-size: var(--step--2);
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.notice__body code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .95em;
+  word-break: break-all;
+}
+.notice--good { border-left-color: var(--accent); }
+.notice--warn { border-left-color: #e8b465; }
+.notice--bad  { border-left-color: #ff8b80; }
+.notice--bad .notice__title { color: #ff8b80; }
+
+/* .icon-btn sets display:grid, which beats the browser's own [hidden]
+   rule — so hiding one needs saying explicitly, exactly as .app[hidden]
+   and .world[hidden] already do. Used by a non-dismissible modal, which
+   must not show a close button it will refuse to honour. */
+.icon-btn[hidden] { display: none; }

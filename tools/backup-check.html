@@ -1,0 +1,912 @@
+<!doctype html><html><head><meta charset="utf-8"><title>backup check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap;padding:1rem"></pre>
+<script>
+// Console noise is a failure, same as in smoke.html: an exception thrown
+// inside an await would otherwise vanish and leave a section merely
+// looking short rather than broken.
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+/**
+ * backup-check.html — proving the .ponyolib engine before any UI exists.
+ *
+ * Run it with tools/run-async.ps1, which waits for the POST at the end
+ * rather than guessing from the load event. Opening this file directly
+ * in a browser works too: with no ?sink= it simply renders the report.
+ *
+ * ── WHY THE WHOLE SUITE RUNS TWICE ────────────────────────────────
+ * The memory adapter is fast and deterministic, which makes it the
+ * right place to test logic. It is also NOT the code that will ever
+ * hold her library. Passing on it proves the planner is correct; it
+ * proves nothing about whether a real IndexedDB transaction committed.
+ *
+ * So `suite()` is written once and run against both adapters. The
+ * memory pass is the same set of checks it always was; the IndexedDB
+ * pass drives the exact production storage path — createIndexedDbAdapter,
+ * real object stores, real structured-clone Blobs, real transactions.
+ * A third section then tests the things only a real database can be
+ * asked: does the data survive closing the connection and opening it
+ * again.
+ *
+ * ── IT CANNOT TOUCH HER LIBRARY ───────────────────────────────────
+ * Every database here is named `ponyo-test-<stamp>-<n>` and deleted at
+ * the end. The real `ponyo-library` database is never opened, and the
+ * last scenario asserts that — because "the tests are isolated" is a
+ * claim that deserves a check of its own.
+ */
+
+const out = document.getElementById('out');
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent += s + '\n'; };
+let fails = 0;
+let checks = 0;
+const ok = (cond, label, extra = '') => {
+  checks += 1;
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+const scenario = (name) => say(`\n-- ${name} --`);
+
+/** Per-adapter tallies, so a failure can be attributed. */
+const tally = {};
+function startTally(name) {
+  tally[name] = { at: checks, fails };
+}
+function endTally(name) {
+  const t = tally[name];
+  t.checks = checks - t.at;
+  t.failed = fails - t.fails;
+}
+
+/** Tell the runner we are done. Without a sink, just stop. */
+function finish() {
+  const report = lines.join('\n');
+  const sink = new URLSearchParams(location.search).get('sink');
+  if (!sink) return;
+  const blob = new Blob([report], { type: 'text/plain' });
+  // sendBeacon is fire-and-forget and CORS-safe for text/plain, which is
+  // exactly what a cross-port result POST needs.
+  if (!navigator.sendBeacon(sink, blob)) {
+    fetch(sink, { method: 'POST', mode: 'no-cors', body: report, keepalive: true }).catch(() => {});
+  }
+}
+
+/* ─────────────────────────────── helpers ────────────────────────── */
+
+const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Deterministic, distinctive bytes so a mix-up between files is visible. */
+function pattern(seed, size) {
+  const b = new Uint8Array(size);
+  for (let i = 0; i < size; i += 1) b[i] = (i * 31 + seed * 97) & 0xFF;
+  return b;
+}
+
+function indexOfSeq(haystack, needle) {
+  outer: for (let i = 0; i <= haystack.length - needle.length; i += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/** Did this throw, and was it our own error type? */
+async function rejects(fn) {
+  try {
+    await fn();
+    return { threw: false, name: '', message: '' };
+  } catch (error) {
+    return { threw: true, name: error?.name ?? '', message: error?.message ?? String(error) };
+  }
+}
+
+/** Drop a database, without hanging if something still holds it open. */
+function deleteDb(name) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = indexedDB.deleteDatabase(name);
+    } catch {
+      resolve('threw');
+      return;
+    }
+    req.onsuccess = () => resolve('deleted');
+    req.onerror = () => resolve('error');
+    req.onblocked = () => resolve('blocked');
+  });
+}
+
+async function databaseNames() {
+  if (typeof indexedDB.databases !== 'function') return null;
+  try {
+    return (await indexedDB.databases()).map((d) => d.name);
+  } catch {
+    return null;
+  }
+}
+
+say('backup-check start');
+
+let M;
+try {
+  M = {
+    zip: await import('/src/utils/zip.js'),
+    backup: await import('/src/storage/backup.js'),
+    adapter: await import('/src/storage/adapter.js'),
+    idb: await import('/src/storage/indexeddb-adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    models: await import('/src/data/models.js'),
+    seed: await import('/src/data/seed-books.js'),
+  };
+} catch (error) {
+  say('THREW while importing  ' + (error?.stack || error));
+  say('1 FAILURE(S)');
+  finish();
+  throw error;
+}
+
+const {
+  buildBackup, verifyBackup, readBackup, planRestore, applyRestore,
+  backupFilename, looksLikeLegacyExport,
+} = M.backup;
+const { createZip, readZip } = M.zip;
+const { keyOf } = M.models;
+
+/** Unique per run, so a failed cleanup never poisons the next run. */
+const runStamp = Date.now().toString(36);
+const REAL_DB = 'ponyo-library';
+
+/** Every throwaway database this run creates, and every open connection. */
+const testDatabases = [];
+const openAdapters = [];
+let dbCounter = 0;
+
+/** Count the blobs actually held in storage. */
+const fileCount = async (repo) => (await repo.snapshot()).files.length;
+
+/**
+ * Rebuild an archive with entries swapped out or dropped, to manufacture
+ * the specific kinds of damage a validator has to catch.
+ */
+async function rezip(blob, { replace = {}, drop = [] } = {}) {
+  const z = await readZip(blob);
+  const entries = [];
+  for (const name of z.names) {
+    if (drop.includes(name)) continue;
+    const data = Object.prototype.hasOwnProperty.call(replace, name)
+      ? replace[name]
+      : await z.bytes(name);
+    entries.push({ name, data, compress: false });
+  }
+  for (const [name, data] of Object.entries(replace)) {
+    if (!z.has(name)) entries.push({ name, data, compress: false });
+  }
+  return createZip(entries);
+}
+
+/* ───────────────────────── the two adapters ─────────────────────── */
+
+async function freshMemoryLibrary() {
+  const repo = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await repo.init({ seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION });
+  return repo;
+}
+
+/**
+ * A fresh library on the REAL adapter, in its own throwaway database.
+ *
+ * The degraded check is not paranoia. `repo.init` catches a failed open
+ * and silently swaps in the memory adapter so the app degrades instead
+ * of showing a blank page — which is right for her and catastrophic for
+ * a test, because the whole IndexedDB suite would pass while testing
+ * nothing at all. So: if it degraded, fail loudly.
+ */
+async function freshIdbLibrary(tag = '') {
+  dbCounter += 1;
+  const database = `ponyo-test-${runStamp}-${dbCounter}${tag ? `-${tag}` : ''}`;
+  const adapter = M.idb.createIndexedDbAdapter({ database });
+  const repo = M.repo.createRepository(adapter);
+  await repo.init({ seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION });
+  if (repo.isDegraded) {
+    throw new Error(`IndexedDB was unavailable, so "${database}" fell back to memory. The real-adapter suite cannot run.`);
+  }
+  testDatabases.push(database);
+  openAdapters.push(adapter);
+  repo.__database = database;
+  repo.__adapter = adapter;
+  return repo;
+}
+
+/* ══════════════════════════════ the suite ═════════════════════════ */
+
+/**
+ * Everything that must hold true regardless of where data is stored.
+ * Run once per adapter.
+ */
+async function suite(label, freshLibrary) {
+  const tag = `[${label}]`;
+
+  /* ────────────────── a realistic source library ─────────────────── */
+  scenario(`${tag} a realistic library to back up`);
+
+  const source = await freshLibrary('source');
+  const catalogueTotal = source.count();
+  ok(catalogueTotal > 0, 'the real catalogue seeded', `${catalogueTotal} books (counted, not asserted)`);
+
+  const all = source.all();
+  const [bookA, bookB, bookC, bookD] = all;
+
+  source.update(bookA.id, {
+    status: 'read', rating: 5, favourite: true,
+    tags: ['reread', 'gift'], thoughts: 'The one I keep coming back to.',
+    notes: [{ text: 'Finished it on the train.' }, { text: 'That last chapter.' }],
+  });
+  source.update(bookB.id, { status: 'reading', progress: { current: 120, total: 400, unit: 'page' } });
+  source.update(bookC.id, { status: 'dnf', rating: 2, thoughts: 'Not for me, not today.' });
+
+  source.setSetting('theme', 'ocean');
+  source.setSetting('textSize', 'cozy');
+  source.setSetting('mood', 'curious');
+  // Deliberately transient. Must NOT appear in the archive.
+  source.setSetting('hasEntered', true);
+  source.setSetting('moodCollapsed', true);
+
+  const coverBytes = pattern(1, 2048);
+  const pdfBytes = pattern(2, 5000);
+  const photoBytes = pattern(3, 3333);
+
+  const coverRec = await source.addFile(
+    bookA.id, new File([coverBytes], 'my-cover.jpg', { type: 'image/jpeg' }), 'cover',
+  );
+  const pdfRec = await source.addFile(
+    bookB.id, new File([pdfBytes], 'reading-notes.pdf', { type: 'application/pdf' }), 'attachment',
+  );
+  const photoRec = await source.addFile(
+    bookD.id, new File([photoBytes], 'the-day-i-bought-it.png', { type: 'image/png' }), 'attachment',
+  );
+  source.update(bookD.id, {
+    memories: [{
+      id: 'mem_test1', fileId: photoRec.id,
+      note: 'Bought in the rain, read in one sitting.', takenAt: '2026-01-02T09:00:00.000Z',
+    }],
+  });
+  // A pasted-URL cover override, which lives in the separate covers store.
+  source.setCover(bookC.id, { url: 'https://example.com/replacement.jpg', source: 'manual' });
+
+  ok(await fileCount(source) === 3, 'three binaries attached', `${await fileCount(source)}`);
+  ok(source.getCover(bookC.id)?.url.includes('example.com'), 'a cover override was set');
+
+  // Reading a blob straight back out is the one thing the memory adapter
+  // cannot vouch for: this is structured clone doing real work.
+  const storedCover = await source.getFile(coverRec.id);
+  ok(sameBytes(await bytesOf(storedCover?.blob), coverBytes),
+    'a stored blob reads back byte-for-byte from storage');
+
+  /* ──────────────────────── buildBackup ──────────────────────────── */
+  scenario(`${tag} buildBackup`);
+
+  const stages = [];
+  const built = await buildBackup(source, {
+    onProgress: (stage) => { if (stages[stages.length - 1] !== stage) stages.push(stage); },
+  });
+
+  ok(built.blob instanceof Blob && built.blob.size > 0, 'an archive was produced',
+    `${(built.blob.size / 1024).toFixed(0)} KB`);
+  ok(/^ponyo-library-\d{4}-\d{2}-\d{2}-\d{6}\.ponyolib$/.test(built.filename),
+    'the filename is timestamped to the second', built.filename);
+  ok(backupFilename(new Date(2026, 0, 2, 3, 4, 5)) === 'ponyo-library-2026-01-02-030405.ponyolib',
+    'and the stamp is the date and time, so two backups never collide');
+  ok(stages.includes('verifying'), 'it verified itself before returning', stages.join(' -> '));
+  ok(built.manifest.version === 2, 'format version 2', String(built.manifest.version));
+  ok(Boolean(built.manifest.createdAt), 'the manifest records when', built.manifest.createdAt);
+
+  /* ───────────────────── backup completeness ─────────────────────── */
+  scenario(`${tag} backup completeness`);
+
+  const parsed = await verifyBackup(built.blob, { deep: true });
+  ok(parsed.books.length === catalogueTotal, 'every book is in the archive',
+    `${parsed.books.length} of ${catalogueTotal}`);
+  ok(parsed.manifest.counts.books === catalogueTotal, 'and the manifest agrees');
+  ok(parsed.files.length === 3, 'all three binaries are indexed', `${parsed.files.length}`);
+  ok(parsed.covers.length === 1, 'the cover override is in the archive');
+  ok(parsed.books.every((b) => typeof b.bookKey === 'string' && b.bookKey.includes('::')),
+    'every archived book carries its bookKey');
+
+  ok(parsed.settings.theme === 'ocean' && parsed.settings.textSize === 'cozy'
+    && parsed.settings.mood === 'curious', 'settings are preserved');
+  ok(!('hasEntered' in parsed.settings), 'transient UI state excluded: hasEntered');
+  ok(!('moodCollapsed' in parsed.settings), 'transient UI state excluded: moodCollapsed');
+
+  ok(parsed.files.every((f) => f.path.startsWith('files/')), 'binary paths are relative to the archive',
+    parsed.files.map((f) => f.path).join(', '));
+  ok(parsed.files.every((f) => !Object.prototype.hasOwnProperty.call(f, 'bookId')),
+    'no install-specific bookId is stored for a file');
+  ok(parsed.files.every((f) => f.bookKey && f.bookKey.includes('::')),
+    'files are addressed by bookKey instead');
+  const indexJson = JSON.stringify(parsed.files) + JSON.stringify(parsed.books);
+  ok(!/[A-Za-z]:\\|\/Users\/|\/home\//.test(indexJson), 'no absolute filesystem path anywhere');
+
+  const archivedA = parsed.books.find((b) => b.bookKey === keyOf(bookA));
+  ok(archivedA?.rating === 5 && archivedA?.favourite === true && archivedA?.status === 'read',
+    'user-edited fields survived into the archive');
+  ok(archivedA?.notes?.length === 2, 'and her notes', `${archivedA?.notes?.length}`);
+
+  /* ───────────────────── readBackup, bytes ───────────────────────── */
+  scenario(`${tag} binaries survive byte-for-byte`);
+
+  const payload = await readBackup(built.blob);
+  ok(payload.blobs.size === 3, 'every binary came back out', `${payload.blobs.size}`);
+  ok(sameBytes(await bytesOf(payload.blobs.get(coverRec.id)), coverBytes),
+    'the uploaded cover is identical');
+  ok(sameBytes(await bytesOf(payload.blobs.get(pdfRec.id)), pdfBytes),
+    'the PDF attachment is identical');
+  ok(sameBytes(await bytesOf(payload.blobs.get(photoRec.id)), photoBytes),
+    'the memory photograph is identical');
+  const coverEntry = payload.files.find((f) => f.id === coverRec.id);
+  ok(coverEntry?.role === 'cover' && coverEntry?.type === 'image/jpeg',
+    'role and MIME type came back too', `${coverEntry?.role} / ${coverEntry?.type}`);
+
+  /* ───────────── cross-install portability (merge) ───────────────── */
+  scenario(`${tag} cross-install portability: different ids, matched by bookKey`);
+
+  const dest = await freshLibrary('dest');
+  const destA = dest.all().find((b) => keyOf(b) === keyOf(bookA));
+  const destB = dest.all().find((b) => keyOf(b) === keyOf(bookB));
+  const destD = dest.all().find((b) => keyOf(b) === keyOf(bookD));
+  ok(Boolean(destA) && destA.id !== bookA.id,
+    'the destination generated a different id for the same book',
+    `${bookA.id} vs ${destA.id}`);
+  ok(dest.count() === catalogueTotal, 'destination starts with the same catalogue');
+
+  const plan = planRestore(dest, payload, 'merge');
+  ok(plan.newBooks.length === 0, 'every book matched by title and author, so none look new',
+    `${plan.newBooks.length} new`);
+  ok(plan.updatedBooks.length >= 3, 'the books she edited are listed as updates',
+    `${plan.updatedBooks.length} updates, ${plan.unchangedBooks} unchanged`);
+  ok(plan.filesAdded.length === 3 && plan.filesReplaced.length === 0
+    && plan.filesUnchanged.length === 0,
+    'all three files are new to this destination',
+    `${plan.filesAdded.length} added, ${plan.filesReplaced.length} replaced, ${plan.filesUnchanged.length} unchanged`);
+  ok(plan.removedBooks.length === 0, 'merge never removes anything');
+  ok(dest.count() === catalogueTotal && await fileCount(dest) === 0,
+    'planning changed nothing at all', `${dest.count()} books, ${await fileCount(dest)} files`);
+
+  const planUpdateLabels = plan.updatedBooks.flatMap((u) => u.changes);
+  ok(planUpdateLabels.includes('rating') && planUpdateLabels.includes('shelf'),
+    'the diff names the fields that differ', Array.from(new Set(planUpdateLabels)).join(', '));
+
+  const restored = await applyRestore(dest, payload, plan);
+  ok(dest.count() === catalogueTotal, 'the restore did NOT duplicate the library',
+    `${dest.count()} books, expected ${catalogueTotal}`);
+
+  const afterA = dest.get(destA.id);
+  ok(Boolean(afterA), 'the destination id was preserved, not replaced by the source id');
+  ok(dest.get(bookA.id) === undefined, 'and the source id did not leak in');
+  ok(afterA?.rating === 5 && afterA?.favourite === true && afterA?.status === 'read'
+    && afterA?.thoughts?.includes('coming back to'), 'her edits landed on the right book');
+  ok(afterA?.notes?.length === 2, 'notes came across', `${afterA?.notes?.length}`);
+  ok(afterA?.tags?.includes('reread'), 'tags came across', (afterA?.tags ?? []).join(', '));
+
+  const afterB = dest.get(destB.id);
+  ok(afterB?.progress?.current === 120 && afterB?.progress?.total === 400, 'progress came across');
+
+  ok(afterA?.coverId === coverRec.id, 'the cover reference survived');
+  const restoredCover = await dest.getFile(afterA.coverId);
+  ok(Boolean(restoredCover?.blob), 'and the cover blob is in destination storage');
+  ok(sameBytes(await bytesOf(restoredCover.blob), coverBytes),
+    'the cover bytes are identical after a full round trip');
+  ok(restoredCover?.bookId === destA.id,
+    'the file was re-pointed at the DESTINATION book id', `${restoredCover?.bookId}`);
+
+  const afterD = dest.get(destD.id);
+  ok(afterD?.memories?.length === 1, 'the memory came across');
+  const restoredPhoto = await dest.getFile(afterD.memories[0].fileId);
+  ok(sameBytes(await bytesOf(restoredPhoto?.blob), photoBytes),
+    'the memory photograph is identical, attached to the right book');
+  ok(restoredPhoto?.bookId === destD.id, 'and points at the right destination book');
+
+  const restoredPdf = await dest.getFile(pdfRec.id);
+  ok(sameBytes(await bytesOf(restoredPdf?.blob), pdfBytes), 'the PDF attachment is identical too');
+
+  const destC = dest.all().find((b) => keyOf(b) === keyOf(bookC));
+  ok(dest.getCover(destC.id)?.url.includes('example.com'),
+    'the cover override was re-keyed onto the destination book');
+  ok(await fileCount(dest) === 3, 'exactly three files in storage', `${await fileCount(dest)}`);
+
+  /* ─────────────────────── safety snapshot ───────────────────────── */
+  scenario(`${tag} the safety snapshot`);
+
+  ok(restored.snapshot?.blob instanceof Blob, 'a snapshot was taken before the restore',
+    `${(restored.snapshot?.blob?.size / 1024).toFixed(0)} KB`);
+  const snapParsed = await verifyBackup(restored.snapshot.blob, { deep: true });
+  ok(snapParsed.books.length === catalogueTotal,
+    'and it is a real, verifiable archive of the library as it was',
+    `${snapParsed.books.length} books`);
+  ok(snapParsed.files.length === 0,
+    'holding the pre-restore state: no files yet at that moment');
+
+  scenario(`${tag} a restore aborts if the snapshot cannot be made`);
+
+  const guarded = await freshLibrary('guarded');
+  const guardedBefore = guarded.count();
+  const realSnapshot = guarded.snapshot;
+  guarded.snapshot = async () => { throw new Error('storage went away'); };
+  const abort = await rejects(() => applyRestore(guarded, payload, planRestore(guarded, payload, 'merge')));
+  guarded.snapshot = realSnapshot;
+  ok(abort.threw && abort.name === 'BackupError', 'it refused to proceed', abort.name);
+  ok(/safety copy/i.test(abort.message), 'and said why', abort.message.slice(0, 80));
+  ok(guarded.count() === guardedBefore && await fileCount(guarded) === 0,
+    'the library was left untouched', `${guarded.count()} books, ${await fileCount(guarded)} files`);
+
+  /* ───────────────────── merge vs replace ────────────────────────── */
+  scenario(`${tag} merge keeps books the backup has never heard of`);
+
+  const mergeDest = await freshLibrary('merge');
+  const localOnly = mergeDest.add({
+    title: 'A Book She Bought Afterwards', author: 'Nobody At All', genre: 'Essays',
+  });
+  const mergeBefore = mergeDest.count();
+  ok(mergeBefore === catalogueTotal + 1, 'the destination has one extra book', `${mergeBefore}`);
+
+  const mergePlan = planRestore(mergeDest, payload, 'merge');
+  ok(mergePlan.removedBooks.length === 0, 'merge plans no removals');
+  await applyRestore(mergeDest, payload, mergePlan);
+  ok(mergeDest.count() === mergeBefore, 'the count is unchanged', `${mergeDest.count()}`);
+  ok(Boolean(mergeDest.get(localOnly.id)), 'and her later book is still there');
+
+  scenario(`${tag} replace makes the library match the backup exactly`);
+
+  const replaceDest = await freshLibrary('replace');
+  const doomed = replaceDest.add({
+    title: 'Something Not In The Backup', author: 'Nobody At All', genre: 'Essays',
+  });
+  await replaceDest.addFile(
+    doomed.id, new File([pattern(9, 128)], 'doomed.png', { type: 'image/png' }), 'cover',
+  );
+  ok(await fileCount(replaceDest) === 1, 'destination has a file of its own');
+
+  const replacePlan = planRestore(replaceDest, payload, 'replace');
+  ok(replacePlan.removedBooks.length === 1, 'replace warns exactly which book goes',
+    replacePlan.removedBooks.map((b) => b.title).join(', '));
+  ok(replacePlan.newBooks.length === catalogueTotal,
+    'and treats every archived book as incoming', `${replacePlan.newBooks.length}`);
+  ok(replaceDest.count() === catalogueTotal + 1, 'planning still changed nothing');
+
+  await applyRestore(replaceDest, payload, replacePlan);
+  ok(replaceDest.count() === catalogueTotal, 'the library now matches the backup',
+    `${replaceDest.count()} books`);
+  ok(replaceDest.get(doomed.id) === undefined, 'the book that was not in the backup is gone');
+  ok(await fileCount(replaceDest) === 3,
+    'and its orphaned file went with it', `${await fileCount(replaceDest)} files`);
+  const replacedA = replaceDest.all().find((b) => keyOf(b) === keyOf(bookA));
+  ok(replacedA?.id === bookA.id, 'replace keeps the archived ids, being a whole-library restore',
+    `${replacedA?.id}`);
+  ok(replacedA?.rating === 5, 'and her edits are intact');
+  const replacedCover = await replaceDest.getFile(replacedA.coverId);
+  ok(sameBytes(await bytesOf(replacedCover?.blob), coverBytes), 'with the cover bytes intact');
+
+  /* ───────────────────────── idempotency ─────────────────────────── */
+  scenario(`${tag} restoring the same backup twice changes nothing the second time`);
+
+  const twice = await freshLibrary('twice');
+  await applyRestore(twice, payload, planRestore(twice, payload, 'merge'));
+  const afterFirst = { books: twice.count(), files: await fileCount(twice) };
+
+  const secondPlan = planRestore(twice, payload, 'merge');
+  ok(secondPlan.newBooks.length === 0, 'the second plan finds nothing new');
+  ok(secondPlan.updatedBooks.length === 0, 'and nothing to update',
+    `${secondPlan.updatedBooks.length} updates`);
+  ok(secondPlan.filesUnchanged.length === 3 && secondPlan.filesAdded.length === 0
+    && secondPlan.filesReplaced.length === 0,
+    'the same files are reported unchanged, not as three replacements',
+    `${secondPlan.filesAdded.length} added, ${secondPlan.filesReplaced.length} replaced, ${secondPlan.filesUnchanged.length} unchanged`);
+  ok(secondPlan.isNoop, 'the plan correctly reports itself as a no-op');
+
+  await applyRestore(twice, payload, secondPlan);
+  ok(twice.count() === afterFirst.books, 'the book count did not move',
+    `${twice.count()} vs ${afterFirst.books}`);
+  ok(await fileCount(twice) === afterFirst.files, 'no file was duplicated',
+    `${await fileCount(twice)} vs ${afterFirst.files}`);
+  const twiceA = twice.all().find((b) => keyOf(b) === keyOf(bookA));
+  ok(twiceA?.rating === 5 && twiceA?.notes?.length === 2, 'and the library is not corrupted');
+  const twiceCover = await twice.getFile(twiceA.coverId);
+  ok(sameBytes(await bytesOf(twiceCover?.blob), coverBytes),
+    'and the cover survived being written twice');
+
+  const thirdRound = await applyRestore(twice, payload, planRestore(twice, payload, 'replace'));
+  ok(twice.count() === catalogueTotal, 'a replace on top of itself is also stable',
+    `${twice.count()}`);
+  ok(await fileCount(twice) === 3, 'still three files', `${await fileCount(twice)}`);
+  ok(thirdRound.mode === 'replace', 'and the result reports the mode it ran in');
+
+  /* ────────── a cover the backup supersedes, and its orphan ──────── */
+  scenario(`${tag} a cover already on the shelf is replaced, and the old file cleaned up`);
+
+  const clash = await freshLibrary('clash');
+  const clashA = clash.all().find((b) => keyOf(b) === keyOf(bookA));
+  const localCoverBytes = pattern(7, 900);
+  const localCover = await clash.addFile(
+    clashA.id, new File([localCoverBytes], 'her-own-cover.jpg', { type: 'image/jpeg' }), 'cover',
+  );
+  ok(clash.get(clashA.id)?.coverId === localCover.id, 'the destination has its own cover for that book');
+
+  const clashPlan = planRestore(clash, payload, 'merge');
+  ok(clashPlan.filesReplaced.length === 1,
+    'the plan says one visible cover will be replaced',
+    clashPlan.filesReplaced.map((f) => `${f.name} on ${f.book}`).join(', '));
+  ok(clashPlan.filesAdded.length === 2, 'and the other two are simply added',
+    `${clashPlan.filesAdded.length}`);
+  ok(clashPlan.removeFileIds.includes(localCover.id),
+    'the superseded file is scheduled for removal');
+
+  await applyRestore(clash, payload, clashPlan);
+  ok(clash.get(clashA.id)?.coverId === coverRec.id, 'the backup cover won');
+  const clashCover = await clash.getFile(coverRec.id);
+  ok(sameBytes(await bytesOf(clashCover?.blob), coverBytes), 'with the right bytes');
+  ok(await clash.getFile(localCover.id) === undefined,
+    'and the orphaned file is gone rather than left behind forever');
+  ok(await fileCount(clash) === 3, 'leaving exactly three files', `${await fileCount(clash)}`);
+
+  /* ──────────────────── rejecting rubbish ────────────────────────── */
+  scenario(`${tag} malformed archives are rejected`);
+
+  const victim = await freshLibrary('victim');
+  const victimBooks = victim.count();
+  const victimFiles = await fileCount(victim);
+
+  const notZip = await rejects(() => readBackup(new Blob(['this is just text, not an archive'])));
+  ok(notZip.threw && notZip.name === 'BackupError', 'plain text is refused', notZip.message.slice(0, 60));
+
+  const empty = await rejects(() => readBackup(new Blob([])));
+  ok(empty.threw && empty.name === 'BackupError', 'an empty file is refused', empty.message.slice(0, 60));
+
+  const noManifest = await rezip(built.blob, { drop: ['manifest.json'] });
+  const noManifestResult = await rejects(() => readBackup(noManifest));
+  ok(noManifestResult.threw && /manifest\.json/.test(noManifestResult.message),
+    'a missing manifest is refused', noManifestResult.message.slice(0, 70));
+
+  const noBooks = await rezip(built.blob, { drop: ['books.json'] });
+  const noBooksResult = await rejects(() => readBackup(noBooks));
+  ok(noBooksResult.threw && /books\.json/.test(noBooksResult.message),
+    'a missing book list is refused', noBooksResult.message.slice(0, 70));
+
+  const wrongFormat = await rezip(built.blob, {
+    replace: { 'manifest.json': JSON.stringify({ format: 'something-else', version: 2, counts: {} }) },
+  });
+  const wrongFormatResult = await rejects(() => readBackup(wrongFormat));
+  ok(wrongFormatResult.threw && /not made by this library/i.test(wrongFormatResult.message),
+    'an archive from another program is refused', wrongFormatResult.message.slice(0, 70));
+
+  const oldVersion = await rezip(built.blob, {
+    replace: { 'manifest.json': JSON.stringify({ format: 'ponyo-library', version: 1, counts: {} }) },
+  });
+  const oldVersionResult = await rejects(() => readBackup(oldVersion));
+  ok(oldVersionResult.threw && /older format/i.test(oldVersionResult.message),
+    'the old metadata-only format is refused with a hint', oldVersionResult.message.slice(0, 60));
+
+  const futureVersion = await rezip(built.blob, {
+    replace: {
+      'manifest.json': JSON.stringify({
+        format: 'ponyo-library', kind: 'backup', version: 99,
+        counts: { books: catalogueTotal, files: 3, covers: 1 },
+      }),
+    },
+  });
+  const futureResult = await rejects(() => readBackup(futureVersion));
+  ok(futureResult.threw && /newer version/i.test(futureResult.message),
+    'a newer format is refused rather than half-read', futureResult.message.slice(0, 60));
+
+  const badJson = await rezip(built.blob, { replace: { 'books.json': '{not json at all' } });
+  const badJsonResult = await rejects(() => readBackup(badJson));
+  ok(badJsonResult.threw, 'unparseable JSON is refused', badJsonResult.message.slice(0, 60));
+
+  scenario(`${tag} a manifest that disagrees with the archive is rejected`);
+
+  const liarManifest = await rezip(built.blob, {
+    replace: {
+      'manifest.json': JSON.stringify({
+        format: 'ponyo-library', kind: 'backup', version: 2,
+        createdAt: new Date().toISOString(),
+        counts: { books: 999, settings: 3, covers: 1, files: 3, bytes: 0 },
+      }),
+    },
+  });
+  const liarResult = await rejects(() => readBackup(liarManifest));
+  ok(liarResult.threw && /999/.test(liarResult.message),
+    'a lying book count is caught', liarResult.message.slice(0, 80));
+
+  const liarFiles = await rezip(built.blob, {
+    replace: {
+      'manifest.json': JSON.stringify({
+        format: 'ponyo-library', kind: 'backup', version: 2,
+        createdAt: new Date().toISOString(),
+        counts: { books: catalogueTotal, settings: 3, covers: 1, files: 7, bytes: 0 },
+      }),
+    },
+  });
+  ok((await rejects(() => readBackup(liarFiles))).threw, 'a lying file count is caught');
+
+  scenario(`${tag} an unsafe path in the archive is rejected`);
+
+  const evilIndex = JSON.stringify([{
+    id: 'fl_evil', bookKey: 'x::y', role: 'cover', name: 'evil.png',
+    type: 'image/png', size: 4, path: '../../evil.png', addedAt: '',
+  }]);
+  const evil = await rezip(built.blob, {
+    replace: {
+      'files.json': evilIndex,
+      'manifest.json': JSON.stringify({
+        format: 'ponyo-library', kind: 'backup', version: 2,
+        createdAt: new Date().toISOString(),
+        counts: { books: catalogueTotal, settings: 3, covers: 1, files: 1, bytes: 4 },
+      }),
+    },
+  });
+  const evilResult = await rejects(() => readBackup(evil));
+  ok(evilResult.threw && /unsafe file path/i.test(evilResult.message),
+    'path traversal is refused', evilResult.message.slice(0, 70));
+
+  scenario(`${tag} a corrupted binary is caught by its checksum`);
+
+  const rawArchive = await bytesOf(built.blob);
+  const at = indexOfSeq(rawArchive, coverBytes.subarray(0, 64));
+  ok(at > 0, 'the stored cover bytes are findable in the archive', `offset ${at}`);
+  const flipped = rawArchive.slice();
+  flipped[at + 32] = flipped[at + 32] ^ 0xFF;
+  const corrupt = new Blob([flipped]);
+  const corruptResult = await rejects(() => readBackup(corrupt));
+  ok(corruptResult.threw && /checksum|damaged/i.test(corruptResult.message),
+    'one flipped byte is enough to fail the restore', corruptResult.message.slice(0, 70));
+
+  scenario(`${tag} a truncated archive is rejected`);
+
+  const truncated = built.blob.slice(0, Math.floor(built.blob.size * 0.6));
+  ok((await rejects(() => readBackup(truncated))).threw, 'a half-copied file is refused');
+
+  const headless = built.blob.slice(0, 200);
+  ok((await rejects(() => readBackup(headless))).threw, 'so is a fragment');
+
+  scenario(`${tag} nothing was written while all of that was being refused`);
+
+  ok(victim.count() === victimBooks, 'the destination book count never moved',
+    `${victim.count()} vs ${victimBooks}`);
+  ok(await fileCount(victim) === victimFiles, 'and no file appeared',
+    `${await fileCount(victim)} vs ${victimFiles}`);
+
+  /* ───────────── the legacy export still works ───────────────────── */
+  scenario(`${tag} the old metadata-only export is untouched`);
+
+  const legacy = source.exportJSON();
+  ok(legacy.format === 'ponyo-library' && legacy.version === 1, 'exportJSON still reports version 1');
+  ok(Array.isArray(legacy.books) && legacy.books.length === catalogueTotal,
+    'and still holds every book', `${legacy.books.length}`);
+  ok(looksLikeLegacyExport(JSON.stringify(legacy)),
+    'and is recognisable, so the UI can say something useful about it');
+
+  return { payload, built, coverBytes, pdfBytes, photoBytes, bookA, catalogueTotal };
+}
+
+/* ══════════════ things only a real database can be asked ══════════ */
+
+/**
+ * The adapter's own contract, exercised directly against IndexedDB
+ * rather than through the repository — because `listAllBlobs` and
+ * `clearBlobs` were written for backup and restore and had never once
+ * run against a real object store.
+ */
+async function idbAdapterDirect() {
+  scenario('[indexeddb] the real adapter methods, directly');
+
+  const database = `ponyo-test-${runStamp}-direct`;
+  const adapter = M.idb.createIndexedDbAdapter({ database });
+  await adapter.open();
+  testDatabases.push(database);
+  openAdapters.push(adapter);
+
+  ok(adapter.name === 'indexeddb', 'this is the production adapter', adapter.name);
+  ok(adapter.database === database, 'pointed at a throwaway database', adapter.database);
+  ok(adapter.database !== REAL_DB, 'which is NOT her library');
+
+  const mk = (id, bookId, seed, size) => ({
+    id, bookId, name: `${id}.bin`, type: 'application/octet-stream',
+    size, role: 'attachment', blob: new Blob([pattern(seed, size)]),
+    addedAt: new Date().toISOString(),
+  });
+
+  await adapter.putBlob(mk('fl_one', 'bk_x', 11, 64));
+  const one = await adapter.getBlob('fl_one');
+  ok(sameBytes(await bytesOf(one?.blob), pattern(11, 64)),
+    'putBlob then getBlob round-trips real bytes through IndexedDB');
+  ok(one?.role === 'attachment' && one?.bookId === 'bk_x', 'with its record fields intact');
+
+  await adapter.putBlob(mk('fl_two', 'bk_x', 12, 32));
+  await adapter.putBlob(mk('fl_three', 'bk_y', 13, 16));
+  ok((await adapter.listBlobsByBook('bk_x')).length === 2,
+    'listBlobsByBook still filters by its index');
+
+  // The orphan case is the whole reason listAllBlobs exists.
+  await adapter.putBlob(mk('fl_orphan', '', 14, 8));
+  const everything = await adapter.listAllBlobs();
+  ok(everything.length === 4, 'listAllBlobs returns every blob', `${everything.length}`);
+  ok(everything.some((b) => b.id === 'fl_orphan'),
+    'including one whose book is gone, which walking books would have missed');
+  ok(everything.every((b) => b.blob instanceof Blob), 'and each still carries a real Blob');
+
+  await adapter.removeBlob('fl_two');
+  ok((await adapter.listAllBlobs()).length === 3, 'removeBlob deletes one',
+    `${(await adapter.listAllBlobs()).length}`);
+  ok(await adapter.getBlob('fl_two') === undefined, 'and it is really gone');
+
+  await adapter.clearBlobs();
+  ok((await adapter.listAllBlobs()).length === 0, 'clearBlobs empties the store');
+  // The other stores must be untouched by clearBlobs.
+  await adapter.put('books', { id: 'bk_survivor', title: 'Still Here' });
+  await adapter.clearBlobs();
+  ok((await adapter.list('books')).length === 1,
+    'and clearBlobs leaves the book records alone');
+
+  adapter.close();
+  ok(await deleteDb(database) === 'deleted', 'the throwaway database deletes cleanly');
+}
+
+/**
+ * The test the memory adapter can never provide: close the connection,
+ * open the database again, and check the restore is actually on disk.
+ *
+ * Everything else asserts against the repository's in-memory maps, which
+ * would look perfect even if not one transaction had committed.
+ */
+async function idbPersistence(fixture) {
+  scenario('[indexeddb] a restore is really on disk, not just in memory');
+
+  const database = `ponyo-test-${runStamp}-persist`;
+  const first = M.idb.createIndexedDbAdapter({ database });
+  const repo = M.repo.createRepository(first);
+  await repo.init({ seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION });
+  testDatabases.push(database);
+  ok(!repo.isDegraded, 'the library opened on real IndexedDB');
+
+  const target = repo.all().find((b) => keyOf(b) === keyOf(fixture.bookA));
+  const targetId = target.id;
+  await applyRestore(repo, fixture.payload, planRestore(repo, fixture.payload, 'merge'));
+  ok(repo.count() === fixture.catalogueTotal, 'restored in this session',
+    `${repo.count()} books`);
+
+  // Drop the connection entirely. Nothing in memory survives this.
+  first.close();
+
+  const second = M.idb.createIndexedDbAdapter({ database });
+  const reopened = M.repo.createRepository(second);
+  const result = await reopened.init({
+    seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION,
+  });
+  openAdapters.push(second);
+
+  ok(!reopened.isDegraded, 'it reopened on real IndexedDB');
+  ok(result.seeded !== true, 'and did not re-seed over the restored library');
+  ok(reopened.count() === fixture.catalogueTotal,
+    'every book was still there after reopening', `${reopened.count()}`);
+
+  const survivor = reopened.get(targetId);
+  ok(Boolean(survivor), 'the book kept its destination id across the reopen');
+  ok(survivor?.rating === 5 && survivor?.status === 'read' && survivor?.favourite === true,
+    'her edits were committed, not just cached');
+  ok(survivor?.notes?.length === 2, 'and her notes', `${survivor?.notes?.length}`);
+
+  const persistedCover = await reopened.getFile(survivor.coverId);
+  ok(Boolean(persistedCover?.blob), 'the uploaded cover blob was committed to disk');
+  ok(sameBytes(await bytesOf(persistedCover.blob), fixture.coverBytes),
+    'and its bytes are identical after a full close and reopen');
+  ok(persistedCover?.bookId === targetId, 'still pointing at the right book');
+
+  const persistedFiles = (await reopened.snapshot()).files;
+  ok(persistedFiles.length === 3, 'all three binaries survived the reopen',
+    `${persistedFiles.length}`);
+
+  const restoredSettings = reopened.allSettings();
+  ok(restoredSettings.theme === 'ocean' && restoredSettings.textSize === 'cozy',
+    'settings were committed too');
+  // Assert on the stored keys, not on getSetting's return value:
+  // getSetting(key, fallback = null) is a default parameter, so passing
+  // `undefined` explicitly selects the default and yields null rather
+  // than undefined. The keys are the honest question anyway.
+  ok(!('hasEntered' in restoredSettings) && !('moodCollapsed' in restoredSettings),
+    'and the transient settings were never written to disk by the restore',
+    `keys: ${Object.keys(restoredSettings).join(', ')}`);
+
+  const coverOverride = reopened.allCovers();
+  ok(coverOverride.length === 1, 'the cover override survived', `${coverOverride.length}`);
+
+  scenario('[indexeddb] wipeAll really empties the database');
+
+  await reopened.wipeAll();
+  ok(reopened.count() === 0, 'in memory');
+  ok((await second.listAllBlobs()).length === 0, 'and the blob store is empty');
+  ok((await second.list('books')).length === 0, 'and the books store is empty');
+  ok((await second.list('covers')).length === 0, 'and the covers store is empty');
+  ok((await second.list('settings')).length === 0, 'and the settings store is empty');
+
+  second.close();
+
+  const third = M.idb.createIndexedDbAdapter({ database });
+  const afterWipe = M.repo.createRepository(third);
+  const wipedResult = await afterWipe.init({
+    seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION,
+  });
+  openAdapters.push(third);
+  ok(wipedResult.seeded === true, 'reopening an emptied database seeds it fresh');
+  ok(afterWipe.count() === fixture.catalogueTotal, 'back to the catalogue',
+    `${afterWipe.count()}`);
+  ok((await afterWipe.snapshot()).files.length === 0, 'with no files left over from before');
+}
+
+/* ════════════════════════════════ run ═════════════════════════════ */
+
+const before = await databaseNames();
+const realDbExistedBefore = before ? before.includes(REAL_DB) : null;
+
+try {
+  startTally('memory');
+  await suite('memory', freshMemoryLibrary);
+  endTally('memory');
+
+  startTally('indexeddb');
+  const fixture = await suite('indexeddb', freshIdbLibrary);
+  await idbAdapterDirect();
+  await idbPersistence(fixture);
+  endTally('indexeddb');
+} catch (error) {
+  fails += 1;
+  say('THREW  ' + (error?.stack || error));
+}
+
+/* ──────────────────────────── cleanup ──────────────────────────── */
+scenario('cleanup: the tests leave nothing behind');
+
+for (const adapter of openAdapters) {
+  try { adapter.close(); } catch { /* already closed */ }
+}
+
+const outcomes = [];
+for (const name of testDatabases) outcomes.push(await deleteDb(name));
+const undeleted = outcomes.filter((o) => o !== 'deleted').length;
+ok(testDatabases.length > 0, 'the IndexedDB suite really created databases',
+  `${testDatabases.length} of them`);
+ok(undeleted === 0, 'every throwaway database was deleted',
+  undeleted ? outcomes.join(', ') : `${outcomes.length} deleted`);
+
+const after = await databaseNames();
+if (after) {
+  const leftovers = after.filter((n) => String(n).startsWith('ponyo-test-'));
+  ok(leftovers.length === 0, 'no test database is left in the origin', leftovers.join(', '));
+  ok(after.includes(REAL_DB) === realDbExistedBefore,
+    'her real library database was never created or removed by these tests',
+    `ponyo-library present: ${realDbExistedBefore} before, ${after.includes(REAL_DB)} after`);
+} else {
+  say('  (indexedDB.databases() unavailable; leftover check skipped)');
+}
+ok(!testDatabases.includes(REAL_DB), 'and it was never even named as a target');
+
+ok(window.__errors.length === 0, 'no console errors anywhere',
+  window.__errors.slice(0, 3).join(' | '));
+
+say('');
+for (const [name, t] of Object.entries(tally)) {
+  say(`${name.padEnd(10)} ${t.checks} checks, ${t.failed} failed`);
+}
+say('');
+say(fails ? `${fails} FAILURE(S) out of ${checks} checks` : `ALL PASS (${checks} checks)`);
+finish();
+</script></body></html>

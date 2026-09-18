@@ -13,6 +13,7 @@ import { computeStats } from '../../analytics/stats.js';
 import { ACHIEVEMENTS, earned } from '../../analytics/achievements.js';
 import { COVER_COUNT } from '../../data/covers.js';
 import { resolveCover, COVER_STATUS } from '../../data/cover-policy.js';
+import { backupCard } from '../components/backup-restore.js';
 
 export function renderSettings(ctx) {
   const { repo, store } = ctx;
@@ -144,9 +145,10 @@ export function renderSettings(ctx) {
       <div class="seg-choice">
         <button class="btn btn--primary" type="button" data-action="import">Paste in more books</button>
         <button class="btn" type="button" data-action="triage">Sort the shelves quickly</button>
-        <button class="btn" type="button" data-action="export">Download a backup</button>
       </div>
     </section>
+
+    ${backupCard()}
 
     <section class="card" style="grid-column:1/-1">
       <h3 class="section__title">Achievements

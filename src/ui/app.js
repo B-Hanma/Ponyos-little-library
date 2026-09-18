@@ -11,7 +11,7 @@
  */
 
 import { qs, qsa, on, debounce, esc } from '../utils/dom.js';
-import { VIEWS, SHELVES } from '../state/store.js';
+import { VIEWS, SHELVES, DEFAULT_PREFS } from '../state/store.js';
 import { visibleBooks, moodFor } from '../state/selectors.js';
 import {
   setMood as setPageMood, setTheme, setMoodsEnabled, setMotion, setReadingFont, setTextSize,
@@ -25,6 +25,7 @@ import { renderSettings, importDialogBody, importPreview } from './views/setting
 import { openBookDetail, bookForm, readForm } from './views/book-detail.js';
 import { openModal, toast, confirmDialog } from './components/overlays.js';
 import { openTriage } from './components/triage.js';
+import { runBackup, runRestore, runLegacyExport } from './components/backup-restore.js';
 import { moodPose } from './components/mood-card.js';
 import { createWorldStage, announceWorld } from './world-stage.js';
 import { installCoverFallback, coverMarkup } from './covers.js';
@@ -571,7 +572,9 @@ export function createApp(ctx) {
 
   on(viewRoot, 'click', '[data-action="triage"]', () => openTriage(ctx));
   on(viewRoot, 'click', '[data-action="import"]', () => openImport());
-  on(viewRoot, 'click', '[data-action="export"]', () => exportBackup());
+  on(viewRoot, 'click', '[data-action="backup"]', () => runBackup(ctx));
+  on(viewRoot, 'click', '[data-action="restore"]', () => runRestore(ctx));
+  on(viewRoot, 'click', '[data-action="export"]', () => runLegacyExport(ctx));
   on(viewRoot, 'click', '[data-action="reset"]', () => resetEverything());
   on(viewRoot, 'click', '[data-action="add-book"]', () => openAddBook());
 
@@ -621,17 +624,40 @@ export function createApp(ctx) {
     });
   }
 
-  function exportBackup() {
-    const data = repo.exportJSON();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `ponyo-library-${today()}.json`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('Backup downloaded. Attachments stay on this device.');
+  /**
+   * Re-read every preference from storage and re-apply it.
+   *
+   * A restore rewrites the settings store underneath a running app, so
+   * the palette, text size and motion switches in memory are suddenly
+   * describing the wrong library. Preferences are owned here, so the
+   * refresh lives here too and the backup dialog just asks for it —
+   * which is why a restore does not need a page reload to look right.
+   */
+  function reloadPreferences() {
+    const prefs = { ...DEFAULT_PREFS };
+    for (const key of Object.keys(DEFAULT_PREFS)) {
+      const stored = repo.getSetting(key, null);
+      if (stored !== null && stored !== undefined) prefs[key] = stored;
+    }
+    store.set({ prefs });
+
+    setMoodsEnabled(prefs.dynamicMoods !== false);
+    setMotion(prefs.animations !== false);
+    setReadingFont(prefs.readingFont);
+    setTextSize(prefs.textSize);
+    applyResolvedTheme();
+    stage.setEnabled(prefs.animations !== false && prefs.dynamicMoods !== false);
+
+    // Her mood check-in is only today's if it was answered today.
+    const sameDay = repo.getSetting('moodDate', null) === today();
+    store.set({
+      mood: sameDay ? repo.getSetting('mood', null) : null,
+      moodWords: sameDay ? (repo.getSetting('moodWords', []) ?? []) : [],
+      moodText: sameDay ? (repo.getSetting('moodText', '') ?? '') : '',
+    });
+    syncWorld(store.state);
   }
+  ctx.reloadPreferences = reloadPreferences;
 
   async function resetEverything() {
     const ok = await confirmDialog({

@@ -33,6 +33,16 @@
  * @property {(id: string) => Promise<Object|undefined>} getBlob
  * @property {(id: string) => Promise<void>}          removeBlob
  * @property {(bookId: string) => Promise<Object[]>}  listBlobsByBook
+ * @property {() => Promise<Object[]>}                listAllBlobs
+ * @property {() => Promise<void>}                    clearBlobs
+ *
+ * `listAllBlobs` and `clearBlobs` exist for backup and restore, which
+ * are the only two operations that legitimately need to see the whole
+ * blob store at once: a backup that walked books instead would silently
+ * omit any file whose book had been deleted, and a Replace restore that
+ * cleared only the collections would leave every uploaded image behind
+ * as an orphan taking up space forever. Phase 2's filesystem adapter
+ * implements these the same way — a directory listing and a delete.
  */
 
 export const COLLECTIONS = Object.freeze({
@@ -88,5 +98,7 @@ export function createMemoryAdapter() {
     async getBlob(id) { return blobs.get(id); },
     async removeBlob(id) { blobs.delete(id); },
     async listBlobsByBook(bookId) { return Array.from(blobs.values()).filter((b) => b.bookId === bookId); },
+    async listAllBlobs() { return Array.from(blobs.values()); },
+    async clearBlobs() { blobs.clear(); },
   };
 }

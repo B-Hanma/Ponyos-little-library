@@ -232,23 +232,147 @@ which makes every later run hang on a profile lock — and the symptom is
 an empty dump with no error, which looks exactly like a broken harness.
 The runner catches it and kills strays before starting.
 
+## The backup suite, and the runner that can wait
+
+```powershell
+.\tools\run-async.ps1 -Harness tools/backup-check.html
+```
+
+**run-async.ps1** exists because `run-checks.ps1` structurally cannot
+grade the backup system. It grades a page by dumping its DOM at the load
+event, and it leans on `--virtual-time-budget` to drain async work first.
+Neither holds here:
+
+- `--dump-dom` fires at the load event, long before a module doing real
+  async work has finished. The dump captured one line and looked exactly
+  like a hung harness.
+- `--virtual-time-budget` only advances virtual time while **timers** are
+  pending. `CompressionStream`, `Blob.arrayBuffer` and IndexedDB are not
+  timers, so under a virtual clock the run stalls partway and *the stall
+  point moves* depending on how much work came before it — a failure
+  indistinguishable from a real bug in the code being tested.
+
+So this runner inverts the contract. Edge runs in **real time**, with no
+budget and no DOM dump, and the harness announces its own finish line by
+POSTing its report to a one-shot `HttpListener` on a second port. Nothing
+is inferred from the page lifecycle. The sink address arrives as `?sink=`
+in the query string, so the harness hardcodes no port and still works
+when you just open it in a browser — no sink, no POST, report on screen.
+
+It needs `serve.ps1` already running, and leaves it completely alone.
+
+**backup-check.html** proves the `.ponyolib` engine. The whole suite is
+written once and run against **both** adapters — memory for speed and
+determinism, then `createIndexedDbAdapter` for the path her library will
+actually use — followed by the things only a real database can be asked.
+It covers: a realistic library (real catalogue, user edits, an uploaded
+cover, a PDF, a memory photograph, a cover override); build, verify, read,
+plan and apply; cross-install portability, where the destination has
+genuinely different generated ids and every book still matches on
+`bookKey(title, author)`; merge versus replace; idempotency; orphan
+cleanup when a cover is superseded; and refusal of malformed archives,
+lying manifests, path traversal, a single flipped byte caught by CRC32,
+and truncation — each with a check that nothing was written while being
+refused.
+
+Two things in it are worth knowing about:
+
+**It cannot touch her library.** `createIndexedDbAdapter` takes a
+`database` option, defaulting to the real `ponyo-library`, purely so the
+harness can point at throwaway `ponyo-test-*` databases. They are deleted
+at the end, and the suite asserts both that none are left behind and that
+`ponyo-library` was neither created nor removed.
+
+**It fails loudly if IndexedDB is unavailable.** `repo.init` catches a
+failed open and silently swaps in the memory adapter, which is right for
+her and catastrophic for a test — the whole IndexedDB pass would go green
+while testing nothing. The harness checks `repo.isDegraded` and throws.
+
+## The Settings flow, driven
+
+```powershell
+.\tools\run-async.ps1 -Harness tools/backup-ui-check.html
+```
+
+**backup-ui-check.html** boots the real app, opens the real Settings
+page and clicks the real buttons. Two browser behaviours cannot be
+triggered from script, and both are stubbed at the prototype rather than
+worked around in the app:
+
+- `HTMLInputElement.click` — a file picker cannot be opened or answered
+  from a test. The stub answers it with a `File` the test chooses, or
+  cancels it.
+- `HTMLAnchorElement.click` — a download would go to disk. The stub
+  captures the blob URL instead, and the test then **fetches it back**
+  and validates the real archive bytes the user would have received.
+
+Everything else is genuine: the real markup, the real delegated click
+handlers, the real modals, the real engine. It covers the backup
+producing a valid archive, a cancelled picker doing nothing at all,
+invalid and legacy files being refused with no writes, the preview's
+numbers matching an independently computed plan, Merge and Replace
+reaching the engine in the right mode (asserted by spying on
+`repo.applyRestore`), the second confirmation Replace requires,
+cancelling that confirmation, the app state refreshing without a reload,
+and both failure paths — a snapshot failure that leaves the library
+untouched, and a mid-write failure that offers the safety copy.
+
+One trap it produced, worth remembering: a click on a node captured
+*before* a `store` change never reaches the handler, because any store
+change re-renders `#view` and detaches it. Look buttons up at the moment
+of clicking.
+
+And one in the runner: PowerShell's `-match` is case-insensitive, so a
+scenario named "a failure partway through" failed a run in which every
+check passed. `run-async.ps1` now uses `-cmatch 'FAILURE\(S\)'` and also
+insists on seeing an `ALL PASS` line.
+
+## Opening an older library
+
+```powershell
+.\tools\run-async.ps1 -Harness tools/compat-check.html
+```
+
+**compat-check.html** covers the two ways a library can arrive from the
+past, and both had been taken on faith until it existed.
+
+**The IndexedDB v1 to v2 upgrade.** Every other test database is created
+fresh, which means it takes the `from < 1` branch and the `from < 2`
+branch has never run. So this harness builds a genuine version 1
+database by hand — three stores, the right indexes, and crucially **no
+covers store** — fills it with records in the shape v1 actually wrote
+(`notes` as a plain string, no `tags`/`memories`/`progress`, the cover
+on the book record), and only then hands it to the production adapter.
+What runs next is the real migration. It then checks that every book,
+setting, blob byte and index survived, that the new covers store works,
+that the repository opens it normally, that it backs up and restores,
+and that reopening it a second time does nothing at all.
+
+This is what caught the shape-migration bug: the *schema* upgrade was
+always correct, but nothing migrated the *records*, so a v1 library
+loaded and then threw in stats, search, DNA and achievements. See the
+comment on the load loop in `repository.js`.
+
+**A backup taken before a catalogue update.** Her library is seeded from
+a catalogue that grows, and `seed:version` drives the top-up. A backup
+carries that flag, so restoring an old one moves the destination's flag
+*backwards*. That is deliberate, and the tests now say so out loud:
+Merge keeps the newer books and the next boot's top-up is a no-op;
+Replace drops them, and the next boot puts them back, with her restored
+edits and her uploaded cover intact throughout. The catalogue is app
+data and repairs itself; only her own writing is precious.
+
 ### What these suites do NOT cover
 
-**Real IndexedDB.** Every suite runs against `createMemoryAdapter`,
-because the real storage path cannot be observed through this harness at
-all:
+**The STORE fallback in situ.** `zip.js` skips compression when
+`CompressionStream` is missing. That path is exercised by a stub, but no
+browser actually lacking it has been tried.
 
-- with `--virtual-time-budget`, IndexedDB callbacks never fire;
-- without it, `--dump-dom` fires at the load event, long before any
-  async work has finished.
+**Large libraries.** The archive is assembled in memory and then read
+back in full to verify. At 47 KB that is free; a library with several
+large PDFs would spike memory, and there is no streaming path.
 
-Both were tried, including a two-pass scheme that parked a report in
-localStorage between runs. Neither produced a result, so there is no
-automated check for it — an honest gap is better than a test that
-silently never runs.
-
-What this means in practice: the repository's *logic* is covered (the
-cover store round-trips, top-up, retire, import, undo), but the
-IndexedDB `onupgradeneeded` block and the write path are verified by
-hand. Open the library, change something, reload, and confirm it is
-still there.
+**A merge that would overwrite newer edits.** For a matched book the
+archived record wins wholesale. Rate a book *after* taking a backup,
+then merge that backup, and the newer rating is lost. It is shown in the
+diff, but it is not a field-level merge.

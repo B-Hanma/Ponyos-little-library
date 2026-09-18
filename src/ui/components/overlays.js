@@ -47,12 +47,30 @@ export function toast(message, { action, duration = 4200 } = {}) {
 
 /**
  * Open a modal.
+ *
+ * `dismissible` is the one thing here that is not about presentation.
+ * Every dialog in this app can be waved away with Escape or a click
+ * outside, which is right for all of them but one: a dialog reporting
+ * an operation that is still running. Dismissing that does not stop the
+ * work, it just hides it — so the backup and restore dialogs open with
+ * `dismissible: false` and call `setDismissible(true)` the moment they
+ * reach a terminal state, at which point normal behaviour returns.
+ *
+ * `close()` itself is never gated. A component always retains the right
+ * to close its own dialog deliberately; what `dismissible` withholds is
+ * the AMBIENT exits — Escape, the scrim, the backdrop, and the header
+ * close button, which is hidden while it would be a lie.
+ *
  * @param {{title: string, subtitle?: string, body: string, footer?: string, size?: 'sm'|'md',
+ *          dismissible?: boolean,
  *          onMount?: (panel: HTMLElement, close: Function) => void,
  *          onClose?: () => void}} config
- * @returns {{close: Function, panel: HTMLElement}}
+ * @returns {{close: Function, panel: HTMLElement, setDismissible: (value: boolean) => void}}
  */
-export function openModal({ title, subtitle = '', body, footer = '', size = 'md', onMount, onClose }) {
+export function openModal({
+  title, subtitle = '', body, footer = '', size = 'md', onMount, onClose,
+  dismissible = true,
+}) {
   const previouslyFocused = document.activeElement;
   const unlock = lockScroll();
 
@@ -95,14 +113,40 @@ export function openModal({ title, subtitle = '', body, footer = '', size = 'md'
     onClose?.();
   }
 
+  let canDismiss = true;
+
+  /**
+   * Every ambient way out funnels through here, so withholding them is
+   * one flag rather than four listeners that have to be kept in step.
+   */
+  function requestClose() {
+    if (canDismiss) close();
+  }
+
   function onKey(event) {
-    if (event.key === 'Escape') { event.stopPropagation(); close(); }
+    if (event.key !== 'Escape') return;
+    // Swallowed either way: a modal is on top, so Escape is not the
+    // page's to act on even when this dialog declines to close.
+    event.stopPropagation();
+    requestClose();
   }
 
   document.addEventListener('keydown', onKey);
-  scrim.addEventListener('click', close);
-  layer.addEventListener('click', (event) => { if (event.target === layer) close(); });
-  panel.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', close));
+  scrim.addEventListener('click', requestClose);
+  layer.addEventListener('click', (event) => { if (event.target === layer) requestClose(); });
+  panel.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', requestClose));
+
+  const headClose = qs('.modal__head [data-close]', panel);
+
+  function setDismissible(value) {
+    canDismiss = Boolean(value);
+    // A dialog that will not close must not offer a button that says it
+    // will. `.icon-btn` sets `display: grid`, which beats the browser's
+    // own [hidden] rule, so components.css carries `.icon-btn[hidden]`
+    // the same way .app[hidden] and .world[hidden] already do.
+    if (headClose) headClose.hidden = !canDismiss;
+  }
+  setDismissible(dismissible);
 
   onMount?.(panel, close);
 
@@ -110,7 +154,7 @@ export function openModal({ title, subtitle = '', body, footer = '', size = 'md'
   const first = panel.querySelector('input, textarea, select, .btn--primary');
   (first instanceof HTMLElement ? first : panel).focus?.({ preventScroll: true });
 
-  return { close, panel };
+  return { close, panel, setDismissible };
 }
 
 /**

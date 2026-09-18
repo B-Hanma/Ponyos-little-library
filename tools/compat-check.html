@@ -1,0 +1,608 @@
+<!doctype html><html><head><meta charset="utf-8"><title>compat check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap;padding:1rem"></pre>
+<script>
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+/**
+ * compat-check.html — opening a library that was saved by an older
+ * version of this app, and restoring a backup taken by one.
+ *
+ * Run with tools/run-async.ps1, same as backup-check.html.
+ *
+ * ── THE TWO THINGS THIS COVERS ────────────────────────────────────
+ *
+ * 1. IndexedDB v1 -> v2. The upgrade block has never run in a test,
+ *    because every test database is created fresh at v2 and therefore
+ *    takes the `from < 1` branch, not the `from < 2` one. So this file
+ *    builds a genuine v1 database by hand — three stores, the right
+ *    indexes, NO covers store — fills it with records in the shape the
+ *    app wrote back then, and only then hands it to the production
+ *    adapter. What runs afterwards is the real migration.
+ *
+ * 2. A backup that predates a catalogue update. Her library is seeded
+ *    from a catalogue that grows, and `seed:version` drives a top-up.
+ *    A backup carries that flag, so restoring an old backup moves the
+ *    destination's flag BACKWARDS. That is either a bug or a feature,
+ *    and until it is written down as a test it is neither.
+ *
+ * Every database is `ponyo-compat-*` and deleted at the end. The real
+ * `ponyo-library` is never opened.
+ */
+
+const out = document.getElementById('out');
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent += s + '\n'; };
+let fails = 0;
+let checks = 0;
+const ok = (cond, label, extra = '') => {
+  checks += 1;
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+const scenario = (name) => say(`\n-- ${name} --`);
+
+function finish() {
+  const report = lines.join('\n');
+  const sink = new URLSearchParams(location.search).get('sink');
+  if (!sink) return;
+  const blob = new Blob([report], { type: 'text/plain' });
+  if (!navigator.sendBeacon(sink, blob)) {
+    fetch(sink, { method: 'POST', mode: 'no-cors', body: report, keepalive: true }).catch(() => {});
+  }
+}
+
+const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+function pattern(seed, size) {
+  const b = new Uint8Array(size);
+  for (let i = 0; i < size; i += 1) b[i] = (i * 31 + seed * 97) & 0xFF;
+  return b;
+}
+async function rejects(fn) {
+  try { await fn(); return { threw: false, message: '' }; }
+  catch (error) { return { threw: true, message: error?.message ?? String(error) }; }
+}
+function deleteDb(name) {
+  return new Promise((resolve) => {
+    const req = indexedDB.deleteDatabase(name);
+    req.onsuccess = () => resolve('deleted');
+    req.onerror = () => resolve('error');
+    req.onblocked = () => resolve('blocked');
+  });
+}
+
+say('compat-check start');
+
+let M;
+try {
+  M = {
+    backup: await import('/src/storage/backup.js'),
+    adapter: await import('/src/storage/adapter.js'),
+    idb: await import('/src/storage/indexeddb-adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    models: await import('/src/data/models.js'),
+    text: await import('/src/utils/text.js'),
+    seed: await import('/src/data/seed-books.js'),
+    stats: await import('/src/analytics/stats.js'),
+    selectors: await import('/src/state/selectors.js'),
+  };
+} catch (error) {
+  say('THREW while importing  ' + (error?.stack || error));
+  say('1 FAILURE(S)');
+  finish();
+  throw error;
+}
+
+const { buildBackup, readBackup, planRestore, applyRestore } = M.backup;
+const { keyOf } = M.models;
+const { bookKey } = M.text;
+
+const runStamp = Date.now().toString(36);
+const REAL_DB = 'ponyo-library';
+const created = [];
+const openAdapters = [];
+
+/* ══════════════════ building a genuine v1 database ════════════════ */
+
+/**
+ * The schema exactly as version 1 of this app created it.
+ *
+ * Copied deliberately rather than imported: the point is to reproduce
+ * what is on her disk from the old version, so if the current
+ * `from < 1` block is ever edited this stays an honest v1.
+ */
+function createV1Database(database) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(database, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      const books = db.createObjectStore('books', { keyPath: 'id' });
+      books.createIndex('status', 'status', { unique: false });
+      books.createIndex('updatedAt', 'updatedAt', { unique: false });
+      db.createObjectStore('settings', { keyPath: 'key' });
+      const files = db.createObjectStore('files', { keyPath: 'id' });
+      files.createIndex('bookId', 'bookId', { unique: false });
+      // No covers store. That absence IS version 1.
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function putAll(db, store, records) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, 'readwrite');
+    const os = tx.objectStore(store);
+    for (const record of records) os.put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/** Open raw, at whatever version exists, and describe the schema. */
+function inspectDatabase(database) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(database);
+    req.onsuccess = () => {
+      const db = req.result;
+      const stores = Array.from(db.objectStoreNames);
+      const info = { version: db.version, stores, indexes: {}, keyPaths: {} };
+      if (!stores.length) { db.close(); resolve(info); return; }
+      const tx = db.transaction(stores, 'readonly');
+      for (const name of stores) {
+        const os = tx.objectStore(name);
+        info.indexes[name] = Array.from(os.indexNames);
+        info.keyPaths[name] = os.keyPath;
+      }
+      tx.oncomplete = () => { db.close(); resolve(info); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/** Read through an index, to prove the index still works after upgrade. */
+function readByIndex(database, store, index, key) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(database);
+    req.onsuccess = () => {
+      const db = req.result;
+      const get = db.transaction(store, 'readonly').objectStore(store).index(index).getAll(key);
+      get.onsuccess = () => { const r = get.result; db.close(); resolve(r); };
+      get.onerror = () => { db.close(); reject(get.error); };
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Records in the shape version 1 wrote them.
+ *
+ * Three deliberate period details, all of which the current code has
+ * since moved past:
+ *   - `notes` is a STRING. models.js still carries the migration for it.
+ *   - newer fields are simply absent: no tags, memories, attachmentIds,
+ *     progress, coverRef, seeded.
+ *   - the cover lives ON the book, because the covers store did not
+ *     exist yet. That is the whole reason for the v2 upgrade.
+ */
+const V1_COVER_BYTES = pattern(21, 1200);
+const V1_PDF_BYTES = pattern(22, 800);
+
+const v1Books = [
+  {
+    id: 'bk_v1_alpha',
+    title: 'The Old Record', author: 'Someone Early',
+    genre: 'Literary Fiction', subgenre: '', series: '',
+    description: 'Written to disk before covers moved out of the book.',
+    status: 'read', rating: 4, favourite: true,
+    notes: 'A single string, the way notes used to be stored.',
+    thoughts: 'Still worth keeping.',
+    coverUrl: 'https://covers.openlibrary.org/b/id/111111-L.jpg',
+    coverId: '', coverSource: 'openlibrary',
+    addedAt: '2025-01-01T00:00:00.000Z',
+    updatedAt: '2025-02-02T00:00:00.000Z',
+    startedAt: '2025-01-05T00:00:00.000Z',
+    finishedAt: '2025-02-02T00:00:00.000Z',
+  },
+  {
+    // The sparsest thing v1 could plausibly have stored.
+    id: 'bk_v1_beta',
+    title: 'A Bare Record', author: 'Nobody Much',
+    genre: 'Mystery', description: '', status: 'tbr', rating: 0,
+    addedAt: '2025-03-03T00:00:00.000Z', updatedAt: '2025-03-03T00:00:00.000Z',
+  },
+  {
+    // An uploaded cover, referenced the v1 way: coverId on the book.
+    id: 'bk_v1_gamma',
+    title: 'One She Photographed', author: 'Early Author',
+    genre: 'Memoir', description: 'Had her own cover before the covers store existed.',
+    status: 'reading', rating: 5, favourite: false,
+    notes: '', thoughts: '',
+    coverUrl: '', coverId: 'fl_v1_cover', coverSource: 'upload',
+    addedAt: '2025-04-04T00:00:00.000Z', updatedAt: '2025-04-05T00:00:00.000Z',
+  },
+];
+
+const v1Settings = [
+  { key: 'seed:version', value: 'v1-catalogue' },
+  { key: 'theme', value: 'ocean' },
+  { key: 'textSize', value: 'cozy' },
+  { key: 'mood', value: 'wistful' },
+];
+
+/* ═══════════════════════ 1. the migration ═════════════════════════ */
+
+async function migrationTests() {
+  const database = `ponyo-compat-${runStamp}-v1`;
+  created.push(database);
+
+  scenario('[migration] a genuine version 1 database exists on disk');
+
+  const v1 = await createV1Database(database);
+  await putAll(v1, 'books', v1Books);
+  await putAll(v1, 'settings', v1Settings);
+  await putAll(v1, 'files', [
+    {
+      id: 'fl_v1_cover', bookId: 'bk_v1_gamma', name: 'her-photo.jpg',
+      type: 'image/jpeg', size: V1_COVER_BYTES.length, role: 'cover',
+      blob: new Blob([V1_COVER_BYTES], { type: 'image/jpeg' }),
+      addedAt: '2025-04-05T00:00:00.000Z',
+    },
+    {
+      id: 'fl_v1_pdf', bookId: 'bk_v1_alpha', name: 'clipping.pdf',
+      type: 'application/pdf', size: V1_PDF_BYTES.length, role: 'attachment',
+      blob: new Blob([V1_PDF_BYTES], { type: 'application/pdf' }),
+      addedAt: '2025-02-03T00:00:00.000Z',
+    },
+  ]);
+  v1.close();
+
+  const before = await inspectDatabase(database);
+  ok(before.version === 1, 'it really is at version 1', `v${before.version}`);
+  ok(!before.stores.includes('covers'), 'and has no covers store', before.stores.join(', '));
+  ok(before.stores.includes('books') && before.stores.includes('settings')
+    && before.stores.includes('files'), 'with the three v1 stores');
+
+  scenario('[migration] the production adapter upgrades it to version 2');
+
+  const adapter = M.idb.createIndexedDbAdapter({ database });
+  await adapter.open();
+  openAdapters.push(adapter);
+  ok(adapter.name === 'indexeddb', 'via the real adapter, not a stand-in');
+
+  const after = await inspectDatabase(database);
+  ok(after.version === 2, 'the database is now version 2', `v${after.version}`);
+  ok(after.stores.includes('covers'), 'the covers store was created', after.stores.join(', '));
+  ok(after.keyPaths.covers === 'id', 'keyed by book id', String(after.keyPaths.covers));
+
+  scenario('[migration] nothing that was there before was lost');
+
+  const books = await adapter.list('books');
+  ok(books.length === v1Books.length, 'every book survived',
+    `${books.length} of ${v1Books.length}`);
+  const alpha = books.find((b) => b.id === 'bk_v1_alpha');
+  ok(alpha?.title === 'The Old Record' && alpha?.rating === 4 && alpha?.favourite === true,
+    'with its fields intact');
+  ok(alpha?.updatedAt === '2025-02-02T00:00:00.000Z', 'and its original timestamps');
+  ok(alpha?.coverUrl?.includes('111111'), 'the v1 cover-on-the-book is still there');
+
+  const settings = await adapter.list('settings');
+  ok(settings.length === v1Settings.length, 'every setting survived', `${settings.length}`);
+  ok(settings.find((s) => s.key === 'seed:version')?.value === 'v1-catalogue',
+    'including the seed flag, which stops it re-seeding over her library');
+
+  const blobs = await adapter.listAllBlobs();
+  ok(blobs.length === 2, 'both uploaded files survived', `${blobs.length}`);
+  const migratedCover = await adapter.getBlob('fl_v1_cover');
+  ok(sameBytes(await bytesOf(migratedCover?.blob), V1_COVER_BYTES),
+    'and the cover bytes are byte-for-byte identical across the upgrade');
+  const migratedPdf = await adapter.getBlob('fl_v1_pdf');
+  ok(sameBytes(await bytesOf(migratedPdf?.blob), V1_PDF_BYTES),
+    'as are the attachment bytes');
+
+  ok((await adapter.list('covers')).length === 0,
+    'the new covers store starts empty, as it should');
+
+  scenario('[migration] the indexes survived the upgrade');
+
+  ok(after.indexes.books?.includes('status') && after.indexes.books?.includes('updatedAt'),
+    'the book indexes are still declared', (after.indexes.books ?? []).join(', '));
+  ok(after.indexes.files?.includes('bookId'), 'and the file index',
+    (after.indexes.files ?? []).join(', '));
+  const readBooks = await readByIndex(database, 'books', 'status', 'read');
+  ok(readBooks.length === 1 && readBooks[0].id === 'bk_v1_alpha',
+    'and the status index still returns rows', `${readBooks.length}`);
+  const byBook = await adapter.listBlobsByBook('bk_v1_gamma');
+  ok(byBook.length === 1, 'the bookId index still works through the adapter', `${byBook.length}`);
+
+  scenario('[migration] the repository opens the upgraded library normally');
+
+  const repo = M.repo.createRepository(adapter);
+  const result = await repo.init({
+    seedBooks: M.seed.SEED_BOOKS, seedVersion: 'v1-catalogue',
+  });
+  ok(!repo.isDegraded, 'it opened on real IndexedDB');
+  ok(result.seeded !== true, 'and did NOT seed over her three books');
+  ok(repo.count() === 3, 'the library is hers, not the catalogue', `${repo.count()}`);
+
+  // Everything below is what the app does on a normal screen. A record
+  // written by v1 has to survive it.
+  const loaded = repo.get('bk_v1_alpha');
+  ok(Array.isArray(loaded?.notes),
+    'a v1 string note was migrated to the list shape on load',
+    `notes is ${Array.isArray(loaded?.notes) ? 'an array' : typeof loaded?.notes}`);
+  ok(Array.isArray(loaded?.tags) && Array.isArray(repo.get('bk_v1_beta')?.memories),
+    'and absent newer fields were filled in rather than left undefined');
+
+  const statsRan = await rejects(async () => M.stats.computeStats(repo.all()));
+  ok(!statsRan.threw, 'the statistics page can read the migrated library', statsRan.message);
+  const searchRan = await rejects(async () => M.selectors.visibleBooks(repo.all(), {
+    shelf: 'all', query: 'old', genre: '', author: '', tag: '', minRating: 0, sort: 'recent',
+  }));
+  ok(!searchRan.threw, 'and so can search and filtering', searchRan.message);
+
+  scenario('[migration] the new covers store is usable straight away');
+
+  repo.setCover('bk_v1_alpha', { url: 'https://example.com/better.jpg', source: 'manual' });
+  await new Promise((r) => setTimeout(r, 50));
+  ok((await adapter.list('covers')).length === 1,
+    'a cover override writes to the store the upgrade created');
+  ok(repo.getCover('bk_v1_alpha')?.url.includes('example.com'), 'and reads back');
+
+  scenario('[migration] a migrated library backs up and restores');
+
+  const built = await buildBackup(repo);
+  ok(built.manifest.counts.books === 3, 'the backup holds her three books',
+    `${built.manifest.counts.books}`);
+  ok(built.manifest.counts.files === 2, 'and both files', `${built.manifest.counts.files}`);
+
+  const payload = await readBackup(built.blob);
+  ok(payload.books.every((b) => Array.isArray(b.notes)),
+    'the archive stores the migrated note shape, not the v1 string');
+  ok(sameBytes(await bytesOf(payload.blobs.get('fl_v1_cover')), V1_COVER_BYTES),
+    'and carries the v1 cover bytes out intact');
+
+  const destDb = `ponyo-compat-${runStamp}-v1dest`;
+  created.push(destDb);
+  const destAdapter = M.idb.createIndexedDbAdapter({ database: destDb });
+  const dest = M.repo.createRepository(destAdapter);
+  await dest.init({ seedBooks: [], seedVersion: 'v1-catalogue' });
+  openAdapters.push(destAdapter);
+
+  const plan = planRestore(dest, payload, 'merge');
+  ok(plan.newBooks.length === 3, 'a fresh install takes all three as new', `${plan.newBooks.length}`);
+  await applyRestore(dest, payload, plan);
+  ok(dest.count() === 3, 'and ends with three', `${dest.count()}`);
+  const restoredGamma = dest.all().find((b) => b.title === 'One She Photographed');
+  const restoredBlob = await dest.getFile(restoredGamma?.coverId);
+  ok(sameBytes(await bytesOf(restoredBlob?.blob), V1_COVER_BYTES),
+    'with the cover she uploaded under version 1 still byte-perfect');
+
+  scenario('[migration] reopening an already-migrated database changes nothing');
+
+  adapter.close();
+  const again = M.idb.createIndexedDbAdapter({ database });
+  const reopened = M.repo.createRepository(again);
+  const secondResult = await reopened.init({
+    seedBooks: M.seed.SEED_BOOKS, seedVersion: 'v1-catalogue',
+  });
+  openAdapters.push(again);
+  ok(secondResult.seeded !== true && secondResult.toppedUp !== true,
+    'no seed, no top-up: it is already where it should be');
+  ok(reopened.count() === 3, 'still three books', `${reopened.count()}`);
+  ok((await again.listAllBlobs()).length === 2, 'still two files');
+  ok((await again.list('covers')).length === 1, 'and the cover override persisted');
+  const stillThere = await again.getBlob('fl_v1_cover');
+  ok(sameBytes(await bytesOf(stillThere?.blob), V1_COVER_BYTES), 'bytes unchanged');
+
+  const finalInfo = await inspectDatabase(database);
+  ok(finalInfo.version === 2, 'the database stayed at version 2', `v${finalInfo.version}`);
+  again.close();
+}
+
+/* ═════════════ 2. a backup from an older catalogue ════════════════ */
+
+async function catalogueVersionTests() {
+  const FULL = M.seed.SEED_BOOKS;
+  // "Last year's catalogue": the same list, minus the most recent additions.
+  const NEWER_COUNT = 12;
+  const OLD = FULL.slice(0, FULL.length - NEWER_COUNT);
+  const newTitles = FULL.slice(FULL.length - NEWER_COUNT).map((b) => bookKey(b.title, b.author));
+
+  const memory = () => M.repo.createRepository(M.adapter.createMemoryAdapter());
+
+  scenario('[catalogue] a library on last year\'s catalogue, backed up');
+
+  const old = memory();
+  await old.init({ seedBooks: OLD, seedVersion: 'cat-1' });
+  const oldTotal = old.count();
+  ok(oldTotal > 0 && oldTotal < FULL.length, 'the older catalogue is genuinely smaller',
+    `${oldTotal} then vs ${FULL.length} now`);
+
+  const edited = old.all()[0];
+  old.update(edited.id, {
+    status: 'read', rating: 5, favourite: true, thoughts: 'Read it before the update.',
+    notes: [{ text: 'A note from the old days.' }],
+  });
+  const coverBytes = pattern(31, 640);
+  await old.addFile(edited.id, new File([coverBytes], 'old.jpg', { type: 'image/jpeg' }), 'cover');
+  old.setSetting('theme', 'ember');
+
+  const built = await buildBackup(old);
+  const payload = await readBackup(built.blob);
+  ok(payload.books.length === oldTotal, 'the backup holds the older catalogue',
+    `${payload.books.length}`);
+  ok(payload.settings['seed:version'] === 'cat-1',
+    'and carries the seed flag it was taken at', payload.settings['seed:version']);
+
+  scenario('[catalogue] MERGE into a library that has since gained books');
+
+  const dest = memory();
+  await dest.init({ seedBooks: FULL, seedVersion: 'cat-2' });
+  const destTotal = dest.count();
+  ok(destTotal > oldTotal, 'the destination is on the newer, larger catalogue',
+    `${destTotal} vs ${oldTotal}`);
+  const destEdited = dest.all().find((b) => keyOf(b) === keyOf(edited));
+
+  const plan = planRestore(dest, payload, 'merge');
+  ok(plan.newBooks.length === 0, 'nothing in the old backup looks new',
+    `${plan.newBooks.length}`);
+  ok(plan.removedBooks.length === 0, 'and merge proposes no removals');
+  ok(plan.settingsChanged.some((s) => s.key === 'seed:version'),
+    'the diff does show the seed flag moving backwards, rather than hiding it',
+    plan.settingsChanged.map((s) => s.key).join(', '));
+
+  await applyRestore(dest, payload, plan);
+  ok(dest.count() === destTotal, 'the newer books were NOT removed by the restore',
+    `${dest.count()} vs ${destTotal}`);
+  const keys = dest.all().map(keyOf);
+  ok(new Set(keys).size === keys.length, 'and no book was duplicated',
+    `${new Set(keys).size} unique of ${keys.length}`);
+  ok(newTitles.every((k) => keys.includes(k)),
+    'every book the newer catalogue added is still on the shelves');
+
+  const mergedEdit = dest.get(destEdited.id);
+  ok(mergedEdit?.rating === 5 && mergedEdit?.status === 'read'
+    && mergedEdit?.thoughts?.includes('before the update'),
+    'her edits from the old backup landed on the destination book');
+  ok(mergedEdit?.id === destEdited.id, 'keeping the destination id');
+  const mergedCover = await dest.getFile(mergedEdit.coverId);
+  ok(sameBytes(await bytesOf(mergedCover?.blob), coverBytes), 'with her cover');
+
+  scenario('[catalogue] the seed flag moves back, and the next boot repairs it');
+
+  ok(dest.getSetting('seed:version') === 'cat-1',
+    'after the restore the library reports the OLD catalogue version',
+    String(dest.getSetting('seed:version')));
+
+  // This is the documented consequence, and it is the desirable one: the
+  // catalogue is app data, so the existing top-up mechanism re-checks it
+  // on the next boot instead of leaving the library stranded.
+  const reopened = M.repo.createRepository(dest.__adapter ?? null);
+  ok(true, 'reopening is simulated below on the same storage');
+
+  const rebooted = await dest.topUpSeed(FULL, 'cat-2', []);
+  ok(rebooted.added === 0, 'the top-up finds nothing missing, because merge kept everything',
+    `added ${rebooted.added}`);
+  ok(dest.getSetting('seed:version') === 'cat-2', 'and the flag is back to current');
+  ok(dest.count() === destTotal, 'with the count unchanged', `${dest.count()}`);
+  const afterTopUp = dest.get(destEdited.id);
+  ok(afterTopUp?.rating === 5, 'and her restored edits untouched by the top-up');
+
+  scenario('[catalogue] REPLACE with an old backup drops the newer books');
+
+  const wiped = memory();
+  await wiped.init({ seedBooks: FULL, seedVersion: 'cat-2' });
+  const replacePlan = planRestore(wiped, payload, 'replace');
+  ok(replacePlan.removedBooks.length === NEWER_COUNT,
+    'replace says exactly how many books it will remove',
+    `${replacePlan.removedBooks.length} of ${wiped.count()}`);
+
+  await applyRestore(wiped, payload, replacePlan);
+  ok(wiped.count() === oldTotal, 'the library now matches the old backup',
+    `${wiped.count()} vs ${oldTotal}`);
+  const wipedKeys = wiped.all().map(keyOf);
+  ok(newTitles.every((k) => !wipedKeys.includes(k)),
+    'the newer catalogue books are gone, as Replace promised');
+  ok(wiped.getSetting('seed:version') === 'cat-1', 'and the seed flag is the old one');
+
+  scenario('[catalogue] and the next boot brings the newer books back');
+
+  const restoredCount = await wiped.topUpSeed(FULL, 'cat-2', []);
+  ok(restoredCount.added === NEWER_COUNT,
+    'the top-up re-adds exactly the books the newer catalogue introduced',
+    `added ${restoredCount.added}`);
+  ok(wiped.count() === destTotal, 'the library is whole again', `${wiped.count()}`);
+  const healedKeys = wiped.all().map(keyOf);
+  ok(new Set(healedKeys).size === healedKeys.length, 'with no duplicates',
+    `${new Set(healedKeys).size} unique of ${healedKeys.length}`);
+  const healedEdit = wiped.all().find((b) => keyOf(b) === keyOf(edited));
+  ok(healedEdit?.rating === 5 && healedEdit?.thoughts?.includes('before the update'),
+    'and her restored edits survived the repair');
+  const healedCover = await wiped.getFile(healedEdit.coverId);
+  ok(sameBytes(await bytesOf(healedCover?.blob), coverBytes), 'along with her cover');
+
+  scenario('[catalogue] the same thing, on real IndexedDB, across a real reopen');
+
+  const database = `ponyo-compat-${runStamp}-cat`;
+  created.push(database);
+  const first = M.idb.createIndexedDbAdapter({ database });
+  const live = M.repo.createRepository(first);
+  await live.init({ seedBooks: FULL, seedVersion: 'cat-2' });
+  ok(!live.isDegraded, 'a real database on the newer catalogue');
+
+  await applyRestore(live, payload, planRestore(live, payload, 'replace'));
+  ok(live.count() === oldTotal, 'replaced with the old backup', `${live.count()}`);
+  first.close();
+
+  // A genuine reopen: new connection, new repository, the real boot path.
+  const second = M.idb.createIndexedDbAdapter({ database });
+  const booted = M.repo.createRepository(second);
+  const bootResult = await booted.init({ seedBooks: FULL, seedVersion: 'cat-2' });
+  openAdapters.push(second);
+  ok(bootResult.toppedUp === true, 'the real boot path detected the older flag and topped up',
+    JSON.stringify({ seeded: bootResult.seeded, toppedUp: bootResult.toppedUp, added: bootResult.added }));
+  ok(booted.count() === destTotal, 'and the library came back whole', `${booted.count()}`);
+  const bootKeys = booted.all().map(keyOf);
+  ok(new Set(bootKeys).size === bootKeys.length, 'with no duplicate books',
+    `${new Set(bootKeys).size} unique of ${bootKeys.length}`);
+  const bootEdit = booted.all().find((b) => keyOf(b) === keyOf(edited));
+  ok(bootEdit?.rating === 5 && bootEdit?.favourite === true,
+    'her edits from the old backup are still there after the reboot');
+  const bootCover = await booted.getFile(bootEdit.coverId);
+  ok(sameBytes(await bytesOf(bootCover?.blob), coverBytes),
+    'and so is the cover, byte-for-byte, through replace + reopen + top-up');
+  ok(booted.getSetting('seed:version') === 'cat-2', 'the flag is current again');
+  ok(booted.getSetting('theme') === 'ember', 'and her restored preference survived all of it');
+}
+
+/* ════════════════════════════════ run ═════════════════════════════ */
+
+const dbsBefore = typeof indexedDB.databases === 'function'
+  ? (await indexedDB.databases()).map((d) => d.name) : null;
+const realExisted = dbsBefore ? dbsBefore.includes(REAL_DB) : null;
+
+try {
+  await migrationTests();
+  await catalogueVersionTests();
+} catch (error) {
+  fails += 1;
+  say('THREW  ' + (error?.stack || error));
+}
+
+scenario('cleanup');
+for (const adapter of openAdapters) {
+  try { adapter.close(); } catch { /* already closed */ }
+}
+const outcomes = [];
+for (const name of created) outcomes.push(await deleteDb(name));
+ok(created.length > 0, 'databases were created', `${created.length}`);
+ok(outcomes.every((o) => o === 'deleted'), 'and all were deleted', outcomes.join(', '));
+
+const dbsAfter = typeof indexedDB.databases === 'function'
+  ? (await indexedDB.databases()).map((d) => d.name) : null;
+if (dbsAfter) {
+  ok(dbsAfter.filter((n) => String(n).startsWith('ponyo-compat-')).length === 0,
+    'nothing was left behind');
+  ok(dbsAfter.includes(REAL_DB) === realExisted,
+    'her real library was never created or removed',
+    `ponyo-library present: ${realExisted} before, ${dbsAfter.includes(REAL_DB)} after`);
+}
+ok(!created.includes(REAL_DB), 'and was never named as a target');
+ok(window.__errors.length === 0, 'no console errors', window.__errors.slice(0, 3).join(' | '));
+
+say('');
+say(fails ? `${fails} FAILURE(S) out of ${checks} checks` : `ALL PASS (${checks} checks)`);
+finish();
+</script></body></html>

@@ -41,7 +41,7 @@ function done(tx) {
  */
 const OPEN_TIMEOUT_MS = 4000;
 
-function openDatabase() {
+function openDatabase(name = DB_NAME) {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in globalThis) || !globalThis.indexedDB) {
       reject(new StorageUnavailableError('This browser has no IndexedDB.'));
@@ -64,7 +64,7 @@ function openDatabase() {
 
     let req;
     try {
-      req = indexedDB.open(DB_NAME, DB_VERSION);
+      req = indexedDB.open(name, DB_VERSION);
     } catch (error) {
       reject(new StorageUnavailableError('IndexedDB could not be opened.', error));
       return;
@@ -103,7 +103,19 @@ function openDatabase() {
   });
 }
 
-export function createIndexedDbAdapter() {
+/**
+ * @param {Object} [options]
+ * @param {string} [options.database]
+ *        Which IndexedDB database to open. Defaults to the real one, so
+ *        the app calls this with no arguments and nothing changes.
+ *
+ *        It is an option purely so the test harness can drive this exact
+ *        code — the production storage path, not a stand-in — against a
+ *        throwaway database. Without it, testing the real adapter would
+ *        mean writing to her actual library, which is not a trade any
+ *        test is worth.
+ */
+export function createIndexedDbAdapter({ database = DB_NAME } = {}) {
   /** @type {IDBDatabase|null} */
   let db = null;
 
@@ -111,10 +123,24 @@ export function createIndexedDbAdapter() {
 
   return {
     name: 'indexeddb',
+    get database() { return database; },
 
     async open() {
       if (db) return;
-      db = await openDatabase();
+      db = await openDatabase(database);
+    },
+
+    /**
+     * Let go of the connection.
+     *
+     * Nothing in the app calls this — the page owns the database for as
+     * long as it is open. It exists so a test can delete its throwaway
+     * database without waiting on `onblocked`.
+     */
+    close() {
+      if (!db) return;
+      db.close();
+      db = null;
     },
 
     async list(collection) {
@@ -172,6 +198,21 @@ export function createIndexedDbAdapter() {
 
     async listBlobsByBook(bookId) {
       return request(store(BLOB_STORE, 'readonly').index('bookId').getAll(bookId));
+    },
+
+    /**
+     * Every blob in the store, including any whose book has since been
+     * deleted. Backup uses this rather than walking books, so an orphan
+     * is still carried across instead of quietly disappearing.
+     */
+    async listAllBlobs() {
+      return request(store(BLOB_STORE, 'readonly').getAll());
+    },
+
+    async clearBlobs() {
+      const tx = db.transaction(BLOB_STORE, 'readwrite');
+      tx.objectStore(BLOB_STORE).clear();
+      await done(tx);
     },
   };
 }

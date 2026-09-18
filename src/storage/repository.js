@@ -70,8 +70,29 @@ export function createRepository(adapter) {
       for (const record of await adapter.list(COLLECTIONS.SETTINGS)) {
         settings.set(record.key, record.value);
       }
+      // Every stored book goes through makeBook on the way in.
+      //
+      // This is not tidiness, it is the shape migration. IndexedDB's
+      // onupgradeneeded moves STORES between versions; it does nothing
+      // about the shape of the records already inside them. A library
+      // written by an older version of this app can hold `notes` as a
+      // plain string, and can be missing `tags`, `memories`,
+      // `attachmentIds` and `progress` entirely — and a dozen callers
+      // reach straight for `book.tags.join`, `book.notes.length` and
+      // `book.memories.length`, which throw on undefined.
+      //
+      // models.js has always claimed to be "tolerant of older records
+      // missing newer fields, so a library saved before notes became a
+      // list still opens". That was only ever true of records passed
+      // THROUGH makeBook, and the load path was handing them straight to
+      // the app instead. Opening a v1 library therefore broke the
+      // statistics page, search, the DNA view and achievements.
+      //
+      // Normalising here keeps that promise, costs one pass over a few
+      // hundred small objects at boot, and is idempotent: a record
+      // written by the current version comes back unchanged.
       for (const record of await adapter.list(COLLECTIONS.BOOKS)) {
-        books.set(record.id, record);
+        books.set(record.id, makeBook(record));
       }
       // Older libraries predate the covers store; an empty list is the
       // correct answer there, not an error.
@@ -297,7 +318,16 @@ export function createRepository(adapter) {
 
     // ------------------------------------------------------------ wholesale
 
-    /** Everything except blobs — small enough to hand back as JSON. */
+    /**
+     * Everything except blobs — small enough to hand back as JSON.
+     *
+     * Kept exactly as it was, and still wired to "Download a backup
+     * (metadata only)" in Settings. It is the quick, human-readable,
+     * diff-able export: paste it into a text editor and read it. What it
+     * is NOT is a complete backup, because it cannot carry her uploaded
+     * covers, memory photographs or attachments. For that, see
+     * `snapshot()` below and storage/backup.js.
+     */
     exportJSON() {
       return {
         format: 'ponyo-library',
@@ -308,6 +338,32 @@ export function createRepository(adapter) {
       };
     },
 
+    /**
+     * Everything, blobs included. This is what a .ponyolib is built from.
+     *
+     * The blob records come back with their `blob` field intact, which
+     * makes this the one place in the app that holds the entire library
+     * in memory at once. That is acceptable because it happens exactly
+     * twice — writing a backup, and taking the safety snapshot before a
+     * restore — and never during normal use.
+     */
+    async snapshot() {
+      return {
+        books: Array.from(books.values()),
+        settings: Object.fromEntries(settings),
+        covers: Array.from(covers.values()),
+        files: await adapter.listAllBlobs(),
+      };
+    },
+
+    /**
+     * Clear the books and settings. Covers and uploaded files are left
+     * alone, because every existing caller of this (the "Erase
+     * everything" button) immediately re-seeds and the seeded books have
+     * no uploads of their own.
+     *
+     * A Replace restore needs more than this — see `wipeAll`.
+     */
     async wipe() {
       books.clear();
       settings.clear();
@@ -315,6 +371,86 @@ export function createRepository(adapter) {
         await adapter.clear(COLLECTIONS.BOOKS);
         await adapter.clear(COLLECTIONS.SETTINGS);
       }, 'wipe');
+    },
+
+    /**
+     * Clear absolutely everything, uploaded files included.
+     *
+     * Unlike `wipe`, failures here are thrown rather than swallowed: a
+     * Replace restore that half-cleared the library and then carried on
+     * would be the single worst outcome this code can produce, so the
+     * caller gets the error and can roll back from its snapshot.
+     */
+    async wipeAll() {
+      books.clear();
+      settings.clear();
+      covers.clear();
+      await adapter.clear(COLLECTIONS.BOOKS);
+      await adapter.clear(COLLECTIONS.SETTINGS);
+      await adapter.clear(COLLECTIONS.COVERS);
+      await adapter.clearBlobs();
+    },
+
+    /**
+     * The single mutating entry point for a restore.
+     *
+     * Everything about WHICH records to write — matching by book key,
+     * merge versus replace, which files are new and which are being
+     * replaced — is decided in storage/backup.js and arrives here as a
+     * finished list of writes. This function only performs them, in an
+     * order chosen so that a failure partway through cannot leave a book
+     * pointing at a file that was never written:
+     *
+     *   1. files    (so every reference has something to land on)
+     *   2. books    (which reference those files)
+     *   3. covers   (which reference books and files)
+     *   4. settings (which reference nothing)
+     *   5. deletions of what has been superseded
+     *
+     * Errors are thrown, never swallowed. The caller holds a verified
+     * snapshot and is expected to use it.
+     *
+     * @param {Object} writes
+     * @param {'merge'|'replace'} writes.mode
+     * @param {Object[]} writes.books        complete, normalised book records
+     * @param {Object[]} writes.covers       cover override records
+     * @param {Object[]} writes.files        blob records, each with a live `blob`
+     * @param {Object}   writes.settings     plain key/value map
+     * @param {string[]} [writes.removeFileIds]  blobs superseded by the restore
+     */
+    async applyRestore({
+      mode, books: bookWrites = [], covers: coverWrites = [],
+      files: fileWrites = [], settings: settingsWrites = {}, removeFileIds = [],
+    }) {
+      if (mode === 'replace') await this.wipeAll();
+
+      for (const record of fileWrites) {
+        await adapter.putBlob(record);
+      }
+
+      for (const book of bookWrites) books.set(book.id, book);
+      await adapter.putMany(COLLECTIONS.BOOKS, bookWrites);
+
+      for (const cover of coverWrites) covers.set(cover.id, cover);
+      if (coverWrites.length) await adapter.putMany(COLLECTIONS.COVERS, coverWrites);
+
+      for (const [key, value] of Object.entries(settingsWrites)) {
+        settings.set(key, value);
+        await adapter.put(COLLECTIONS.SETTINGS, { key, value });
+      }
+
+      // Last, and individually tolerant: an orphan we failed to delete
+      // wastes a little space, which is not worth failing a restore for.
+      for (const id of removeFileIds) {
+        await adapter.removeBlob(id).catch(() => {});
+      }
+
+      return {
+        books: bookWrites.length,
+        covers: coverWrites.length,
+        files: fileWrites.length,
+        settings: Object.keys(settingsWrites).length,
+      };
     },
   };
 }

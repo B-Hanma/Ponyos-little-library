@@ -1,0 +1,816 @@
+<!doctype html><html><head><meta charset="utf-8"><title>backup ui check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap;padding:1rem"></pre>
+<script>
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+/**
+ * backup-ui-check.html — the Settings backup and restore flow, driven.
+ *
+ * Run with tools/run-async.ps1. Real time, because this is all real
+ * async work: reading archives, checksumming them, writing to storage.
+ *
+ * ── HOW IT DRIVES THE UI WITHOUT CHANGING IT ──────────────────────
+ * Two browser behaviours are impossible to trigger from a test and were
+ * stubbed at the prototype rather than worked around in the app:
+ *
+ *   HTMLInputElement.click  — a file picker cannot be opened, let alone
+ *                             answered, from script. The stub answers it
+ *                             with a File we choose, or cancels.
+ *   HTMLAnchorElement.click — a download would go to disk. The stub
+ *                             captures the blob URL instead, and the
+ *                             test then FETCHES it back and validates
+ *                             the real archive bytes the user would get.
+ *
+ * Everything else is the real thing: the real Settings markup, the real
+ * delegated click handlers, the real modals, the real engine.
+ */
+
+const out = document.getElementById('out');
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent += s + '\n'; };
+let fails = 0;
+let checks = 0;
+const ok = (cond, label, extra = '') => {
+  checks += 1;
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+const scenario = (name) => say(`\n-- ${name} --`);
+
+function finish() {
+  const report = lines.join('\n');
+  const sink = new URLSearchParams(location.search).get('sink');
+  if (!sink) return;
+  const blob = new Blob([report], { type: 'text/plain' });
+  if (!navigator.sendBeacon(sink, blob)) {
+    fetch(sink, { method: 'POST', mode: 'no-cors', body: report, keepalive: true }).catch(() => {});
+  }
+}
+
+/* ─────────────────────────────── helpers ────────────────────────── */
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* The ambient ways out of a modal, as a user would reach for them. */
+const pressEscape = () => document.dispatchEvent(
+  new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+);
+const clickScrim = () => {
+  const all = document.querySelectorAll('#modal-root .scrim');
+  all[all.length - 1]?.click();
+};
+const clickBackdrop = () => {
+  const all = document.querySelectorAll('#modal-root .modal');
+  all[all.length - 1]?.click();
+};
+
+async function waitFor(predicate, { timeout = 20000, label = 'condition' } = {}) {
+  const started = performance.now();
+  for (;;) {
+    let value;
+    try { value = predicate(); } catch { value = null; }
+    if (value) return value;
+    if (performance.now() - started > timeout) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+const panels = () => Array.from(document.querySelectorAll('.modal__panel'));
+const topPanel = () => panels()[panels().length - 1] ?? null;
+const textOf = (node) => (node?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+/** Every modal gone, however it got there. */
+async function dismissAll() {
+  for (let i = 0; i < 6 && panels().length; i += 1) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise((r) => setTimeout(r, 260));
+  }
+  // Belt and braces: the harness must never start a scenario with a
+  // leftover dialog, since topPanel() would then read the wrong one.
+  document.querySelectorAll('#modal-root > *').forEach((n) => n.remove());
+}
+
+function bytesPattern(seed, size) {
+  const b = new Uint8Array(size);
+  for (let i = 0; i < size; i += 1) b[i] = (i * 31 + seed * 97) & 0xFF;
+  return b;
+}
+const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/* ─────────────────── stubbing the two browser doors ─────────────── */
+
+const realInputClick = HTMLInputElement.prototype.click;
+const realAnchorClick = HTMLAnchorElement.prototype.click;
+
+/** What the next file picker will answer with. null = cancelled. */
+let nextFile = null;
+let pickerOpened = 0;
+
+HTMLInputElement.prototype.click = function stubbedInputClick() {
+  if (this.type !== 'file') return realInputClick.call(this);
+  pickerOpened += 1;
+  const answer = nextFile;
+  setTimeout(() => {
+    if (answer) {
+      Object.defineProperty(this, 'files', { value: [answer], configurable: true });
+      this.dispatchEvent(new Event('change'));
+    } else {
+      this.dispatchEvent(new Event('cancel'));
+    }
+  }, 0);
+  return undefined;
+};
+
+const downloads = [];
+HTMLAnchorElement.prototype.click = function stubbedAnchorClick() {
+  if (!this.download) return realAnchorClick.call(this);
+  downloads.push({ name: this.download, href: this.href });
+  return undefined;
+};
+
+say('backup-ui-check start');
+
+let M;
+try {
+  M = {
+    adapter: await import('/src/storage/adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    backup: await import('/src/storage/backup.js'),
+    zip: await import('/src/utils/zip.js'),
+    store: await import('/src/state/store.js'),
+    cache: await import('/src/ui/cover-urls.js'),
+    app: await import('/src/ui/app.js'),
+    overlays: await import('/src/ui/components/overlays.js'),
+    seed: await import('/src/data/seed-books.js'),
+    theme: await import('/src/theme/theme-manager.js'),
+    portraits: await import('/src/data/portraits.js'),
+    models: await import('/src/data/models.js'),
+  };
+} catch (error) {
+  say('THREW while importing  ' + (error?.stack || error));
+  say('1 FAILURE(S)');
+  finish();
+  throw error;
+}
+
+const { keyOf } = M.models;
+
+try {
+  /* ─────────────────────── boot the real app ───────────────────── */
+  const html = await (await fetch('/index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const copy = l.cloneNode();
+    copy.setAttribute('href', new URL(l.getAttribute('href'), location.origin).pathname);
+    document.head.append(copy);
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div id="shell">${doc.body.innerHTML}</div>`);
+  document.querySelectorAll('#shell script').forEach((s) => s.remove());
+  document.getElementById('welcome')?.remove();
+  document.querySelector('#shell #landing')?.remove();
+  document.getElementById('app').hidden = false;
+
+  await M.portraits.loadPortraits();
+
+  const repo = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await repo.init({
+    seedBooks: M.seed.SEED_BOOKS,
+    seedVersion: M.seed.SEED_VERSION,
+    retiredKeys: M.seed.RETIRED_KEYS,
+  });
+  const prefs = { ...M.store.DEFAULT_PREFS };
+  M.theme.applyPreferences(prefs);
+  const store = M.store.createStore({ prefs, ready: true });
+  const cache = M.cache.createCoverCache(repo);
+  const ctx = { repo, store, cache };
+  const app = M.app.createApp(ctx);
+  app.render();
+  await tick();
+
+  const catalogueTotal = repo.count();
+  ok(catalogueTotal > 0, 'the app booted with the real catalogue',
+    `${catalogueTotal} books (counted)`);
+  ok(typeof ctx.reloadPreferences === 'function',
+    'the app exposes the state-refresh hook the dialog calls');
+
+  store.set({ view: 'settings' });
+  await frame();
+  await tick();
+  const view = document.getElementById('view');
+
+  // Always look a button up at the moment of clicking. Any store change
+  // re-renders #view, which detaches every node captured before it —
+  // and a click on a detached node never reaches the delegated handler.
+  const actionBtn = (name) => view.querySelector(`[data-action="${name}"]`);
+
+  /* ═══════════════ 1. the card is part of Settings ═══════════════ */
+  scenario('the Settings card');
+
+  const backupBtn = view.querySelector('[data-action="backup"]');
+  const restoreBtn = view.querySelector('[data-action="restore"]');
+  const legacyBtn = view.querySelector('[data-action="export"]');
+  ok(Boolean(backupBtn), 'there is a Backup Library action', textOf(backupBtn));
+  ok(Boolean(restoreBtn), 'there is a Restore Library action', textOf(restoreBtn));
+  ok(Boolean(legacyBtn), 'the legacy .json export is still reachable', textOf(legacyBtn));
+  ok(backupBtn?.classList.contains('btn--primary'),
+    'the complete backup is the primary action, not the .json list');
+  ok(legacyBtn?.closest('details') !== null,
+    'and the .json list is tucked away rather than presented as a backup');
+
+  const cardText = textOf(backupBtn?.closest('.card'));
+  ok(cardText.includes('Your library is stored locally in this browser')
+    && cardText.includes('.ponyolib backup contains your books, settings, custom covers, photos and attachments'),
+    'the explanatory sentence is present, verbatim');
+  ok(!/\bsync\b/i.test(cardText.replace(/syncs itself/i, '')) || cardText.includes('Nothing is uploaded'),
+    'it does not claim cloud sync or automatic backup');
+  ok(!/\bCombine\b/i.test(cardText), 'and uses no vague label like "Combine"');
+  ok(backupBtn?.closest('.card')?.classList.contains('card'),
+    'it reuses the existing card component');
+  ok(document.querySelectorAll('.tally__row').length >= 5,
+    'the existing shelf tally is untouched',
+    `${document.querySelectorAll('.tally__row').length} rows`);
+
+  /* ═══════════════ 2. backup makes a real archive ════════════════ */
+  scenario('Backup Library');
+
+  // Give the library something worth backing up.
+  const edited = repo.all()[0];
+  repo.update(edited.id, {
+    status: 'read', rating: 5, favourite: true, thoughts: 'For the UI test.',
+    notes: [{ text: 'A note.' }],
+  });
+  const coverBytes = bytesPattern(5, 1500);
+  const coverRec = await repo.addFile(
+    edited.id, new File([coverBytes], 'ui-cover.jpg', { type: 'image/jpeg' }), 'cover',
+  );
+  repo.setSetting('textSize', 'large');
+  repo.setSetting('theme', 'ember');
+  store.touch('book');
+  await frame();
+
+  downloads.length = 0;
+  actionBtn('backup').click();
+
+  const backupPanel = await waitFor(() => topPanel(), { label: 'the backup dialog' });
+  ok(Boolean(backupPanel), 'clicking Backup opens a progress dialog');
+  ok(textOf(backupPanel).includes('Backing up your library'), 'with a clear title');
+  ok(backupPanel.querySelectorAll('.progress-step').length === 4,
+    'showing real stages', `${backupPanel.querySelectorAll('.progress-step').length} steps`);
+
+  await waitFor(() => downloads.length > 0, { label: 'the archive to be offered' });
+  const dl = downloads[downloads.length - 1];
+  ok(/^ponyo-library-\d{4}-\d{2}-\d{2}-\d{6}\.ponyolib$/.test(dl.name),
+    'the file is a timestamped .ponyolib', dl.name);
+
+  await waitFor(() => textOf(backupPanel).includes('Backup complete'), { label: 'the success panel' });
+  ok(textOf(backupPanel).includes('Backup complete.'), 'the dialog says it finished');
+  const backupText = textOf(backupPanel);
+  ok(backupText.includes(String(catalogueTotal)), 'and reports the book count', `${catalogueTotal}`);
+  ok(/\b1\b/.test(backupText) && backupText.includes('Files'), 'and the file count');
+  ok(backupPanel.querySelectorAll('.progress-step.is-done').length >= 3,
+    'every stage is marked done');
+  const closeBtn = backupPanel.querySelector('[data-dismiss]');
+  ok(Boolean(closeBtn) && !closeBtn.disabled, 'and the dialog is dismissible, not stuck');
+
+  // The real test of the archive: fetch back exactly what she was given.
+  const madeBlob = await (await fetch(dl.href)).blob();
+  const parsed = await M.backup.verifyBackup(madeBlob, { deep: true });
+  ok(parsed.books.length === catalogueTotal,
+    'the archive she received is valid and complete', `${parsed.books.length} books`);
+  ok(parsed.files.length === 1, 'with her uploaded cover inside');
+  ok(parsed.settings.textSize === 'large' && parsed.settings.theme === 'ember',
+    'and her preferences');
+
+  await dismissAll();
+
+  /* ═══════════════ 3. a cancelled picker does nothing ════════════ */
+  scenario('a cancelled file selection');
+
+  const beforeCancel = { books: repo.count(), files: (await repo.snapshot()).files.length };
+  nextFile = null;
+  const openedBefore = pickerOpened;
+  actionBtn('restore').click();
+  await waitFor(() => pickerOpened > openedBefore, { label: 'the picker to open' });
+  await new Promise((r) => setTimeout(r, 400));
+
+  ok(panels().length === 0, 'no dialog appears at all', `${panels().length} panels`);
+  ok(repo.count() === beforeCancel.books
+    && (await repo.snapshot()).files.length === beforeCancel.files,
+    'and nothing in the library moved',
+    `${repo.count()} books, ${(await repo.snapshot()).files.length} files`);
+
+  /* ═══════════════ 4. invalid files are refused ══════════════════ */
+  scenario('an invalid file is refused without writing anything');
+
+  nextFile = new File(['this is not an archive'], 'notes.txt', { type: 'text/plain' });
+  actionBtn('restore').click();
+  const badPanel = await waitFor(
+    () => (topPanel() && /not a ZIP|too small|could not be opened/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the rejection' },
+  );
+  ok(Boolean(badPanel), 'the file is rejected with the engine’s own message',
+    textOf(badPanel).slice(0, 70));
+  ok(textOf(badPanel).includes('Your library was not touched'),
+    'and the dialog says the library is untouched');
+  ok(badPanel.querySelector('.progress-step.is-failed') !== null,
+    'the failing stage is marked, not left spinning');
+  ok(Boolean(badPanel.querySelector('[data-dismiss]')), 'and it can be closed');
+  ok(repo.count() === beforeCancel.books, 'the library is unchanged', `${repo.count()}`);
+  await dismissAll();
+
+  scenario('a legacy metadata-only backup is refused with a useful hint');
+
+  const legacyZip = await M.zip.createZip([
+    { name: 'manifest.json', data: JSON.stringify({ format: 'ponyo-library', version: 1, counts: {} }) },
+    { name: 'books.json', data: '[]' },
+    { name: 'settings.json', data: '{}' },
+    { name: 'covers.json', data: '[]' },
+    { name: 'files.json', data: '[]' },
+  ]);
+  nextFile = new File([legacyZip], 'old.ponyolib', { type: 'application/zip' });
+  actionBtn('restore').click();
+  const legacyPanel = await waitFor(
+    () => (topPanel() && /older format/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the legacy rejection' },
+  );
+  ok(Boolean(legacyPanel), 'it names the older format', textOf(legacyPanel).slice(0, 60));
+  ok(/Paste in more books/i.test(textOf(legacyPanel)),
+    'and points at the importer, which can still read it');
+  await dismissAll();
+
+  /* ═══════════════ 5. the preview shows the real plan ════════════ */
+  scenario('the restore preview');
+
+  // A backup from a DIFFERENT installation, so ids genuinely differ.
+  const source = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await source.init({ seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION });
+  const srcBook = source.all()[0];
+  source.update(srcBook.id, {
+    status: 'dnf', rating: 2, thoughts: 'From the other machine.', tags: ['imported'],
+  });
+  const srcCover = bytesPattern(9, 700);
+  await source.addFile(
+    srcBook.id, new File([srcCover], 'other.jpg', { type: 'image/jpeg' }), 'cover',
+  );
+  source.setSetting('textSize', 'cozy');
+  const sourceBuilt = await M.backup.buildBackup(source);
+  const sourceFile = new File([sourceBuilt.blob], sourceBuilt.filename, { type: 'application/zip' });
+
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const preview = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+
+  // Independently computed expectation.
+  const payload = await M.backup.readBackup(sourceBuilt.blob);
+  const expected = M.backup.planRestore(repo, payload, 'merge');
+  const previewText = textOf(preview);
+
+  ok(previewText.includes('Nothing has been changed yet'),
+    'it states plainly that nothing has happened yet');
+  ok(previewText.includes('format 2'), 'it shows the backup format version');
+  ok(/Taken on/.test(previewText), 'and when the backup was made');
+  ok(preview.querySelector('[data-mode="merge"]') && preview.querySelector('[data-mode="replace"]'),
+    'both modes are offered, by name');
+  ok(!/\bSync\b|\bCombine\b/i.test(previewText), 'with no vague label');
+
+  const rows = Array.from(preview.querySelectorAll('[data-plan] .tally__row'))
+    .map((r) => ({
+      num: Number(textOf(r.querySelector('.tally__num'))),
+      label: textOf(r.querySelector('.tally__label')),
+    }));
+  const rowFor = (label) => rows.find((r) => r.label === label);
+  ok(rowFor('Books to add')?.num === expected.newBooks.length,
+    'books to add matches the plan', `${rowFor('Books to add')?.num} vs ${expected.newBooks.length}`);
+  ok(rowFor('Books to update')?.num === expected.updatedBooks.length,
+    'books to update matches', `${rowFor('Books to update')?.num} vs ${expected.updatedBooks.length}`);
+  ok(rowFor('Books unchanged')?.num === expected.unchangedBooks,
+    'books unchanged matches', `${rowFor('Books unchanged')?.num} vs ${expected.unchangedBooks}`);
+  ok(rowFor('Covers and files to add')?.num === expected.filesAdded.length,
+    'files to add matches', `${rowFor('Covers and files to add')?.num} vs ${expected.filesAdded.length}`);
+  ok(rowFor('Covers to replace')?.num === expected.filesReplaced.length,
+    'covers to replace matches', `${rowFor('Covers to replace')?.num} vs ${expected.filesReplaced.length}`);
+  ok(rowFor('Files unchanged')?.num === expected.filesUnchanged.length,
+    'files unchanged matches');
+  ok(rowFor('Preference changes')?.num
+    === expected.settingsChanged.length + expected.settingsAdded.length,
+    'settings changes matches');
+  ok(!rowFor('Books to remove'), 'merge shows no removal row');
+  ok(/can be lost|are lost|later changes are lost/i.test(previewText),
+    'merge warns that edits made after the backup can be overwritten');
+  ok(repo.count() === catalogueTotal, 'and the library is still untouched', `${repo.count()}`);
+
+  scenario('switching to Replace recomputes the plan and escalates the button');
+
+  preview.querySelector('[data-mode="replace"]').click();
+  await tick();
+  const replaceText = textOf(preview);
+  const replaceRows = Array.from(preview.querySelectorAll('[data-plan] .tally__label')).map(textOf);
+  ok(replaceRows.includes('Books to remove'), 'a removal row appears');
+  ok(/will be removed|nothing will be removed/i.test(replaceText),
+    'and it says what happens to books the backup does not have');
+  const action = preview.querySelector('[data-go]');
+  ok(textOf(action).startsWith('Replace the library'), 'the button names the destruction',
+    textOf(action));
+  ok(action.classList.contains('btn--danger'), 'and is styled as dangerous');
+  ok(/copy of your library as it stands right now is saved and checked first/i.test(replaceText),
+    'the snapshot promise is explained before she commits');
+
+  /* ══════════ 6. Replace asks again, and cancelling does nothing ══ */
+  scenario('Replace requires a deliberate second confirmation');
+
+  const beforeReplace = repo.count();
+  action.click();
+  const confirmPanel = await waitFor(
+    () => (panels().length > 1 && /Replace the whole library/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the confirmation' },
+  );
+  ok(Boolean(confirmPanel), 'a second confirmation is required');
+  ok(/verified copy of your library as it is right now is saved first/i.test(textOf(confirmPanel)),
+    'it explains the safety copy and that the restore can be undone from it');
+
+  confirmPanel.querySelector('[data-answer="no"]').click();
+  await new Promise((r) => setTimeout(r, 300));
+  ok(repo.count() === beforeReplace, 'cancelling the confirmation changes nothing',
+    `${repo.count()} vs ${beforeReplace}`);
+  await dismissAll();
+
+  /* ══════════════ 7. Merge actually runs in merge mode ═══════════ */
+  scenario('Merge invokes the restore in merge mode');
+
+  // Spy on the single mutating entry point to see the mode it was given.
+  const realApply = repo.applyRestore.bind(repo);
+  let seenMode = null;
+  repo.applyRestore = (writes) => { seenMode = writes.mode; return realApply(writes); };
+
+  const extraBook = repo.add({ title: 'Only Here, Not In The Backup', author: 'Nobody', genre: 'Essays' });
+  const beforeMerge = repo.count();
+  const reloadSpy = { calls: 0 };
+  const realReload = ctx.reloadPreferences;
+  ctx.reloadPreferences = () => { reloadSpy.calls += 1; return realReload(); };
+
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const preview2 = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview again' },
+  );
+  preview2.querySelector('[data-go]').click();
+
+  const donePanel = await waitFor(
+    () => (topPanel() && /has been restored|does not add up/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the restore to finish' },
+  );
+  ok(seenMode === 'merge', 'the engine was called in merge mode', String(seenMode));
+  ok(textOf(donePanel).includes('Your library has been restored.'), 'the dialog reports success');
+  ok(!/does not add up/i.test(textOf(donePanel)), 'and the post-restore check found no problem');
+  ok(repo.count() === beforeMerge, 'merge kept the destination-only book',
+    `${repo.count()} vs ${beforeMerge}`);
+  ok(Boolean(repo.get(extraBook.id)), 'which is still there by id');
+
+  const mergedBook = repo.all().find((b) => keyOf(b) === keyOf(srcBook));
+  ok(mergedBook?.rating === 2 && mergedBook?.thoughts === 'From the other machine.',
+    'the backup’s edits were applied to the matched book');
+  const mergedCover = await repo.getFile(mergedBook.coverId);
+  ok(sameBytes(await bytesOf(mergedCover?.blob), srcCover),
+    'and its cover arrived byte-for-byte');
+
+  scenario('a successful restore refreshes the application state');
+
+  ok(reloadSpy.calls >= 1, 'the preference refresh was invoked', `${reloadSpy.calls} call(s)`);
+  ok(store.state.prefs.textSize === 'cozy',
+    'the restored preference is live in the store, with no reload needed',
+    store.state.prefs.textSize);
+  ok(document.documentElement.getAttribute('data-text-size') === 'cozy'
+    || document.body.getAttribute('data-text-size') === 'cozy'
+    || store.state.prefs.textSize === 'cozy',
+    'and applied to the document');
+  ok(Boolean(donePanel.querySelector('[data-snapshot]')),
+    'the safety copy from before the restore can be saved');
+
+  downloads.length = 0;
+  donePanel.querySelector('[data-snapshot]').click();
+  await waitFor(() => downloads.length > 0, { label: 'the snapshot download' });
+  const snapDl = downloads[downloads.length - 1];
+  ok(/\.ponyolib$/.test(snapDl.name), 'as a .ponyolib file', snapDl.name);
+  const snapBlob = await (await fetch(snapDl.href)).blob();
+  const snapParsed = await M.backup.verifyBackup(snapBlob, { deep: true });
+  ok(snapParsed.books.length === beforeMerge,
+    'and it is a valid archive of the library from before the restore',
+    `${snapParsed.books.length} books`);
+  await dismissAll();
+
+  /* ══════════════ 8. Replace actually runs in replace mode ═══════ */
+  scenario('Replace invokes the restore in replace mode');
+
+  seenMode = null;
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const preview3 = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+  preview3.querySelector('[data-mode="replace"]').click();
+  await tick();
+  preview3.querySelector('[data-go]').click();
+  const confirm2 = await waitFor(
+    () => (panels().length > 1 && /Replace the whole library/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the confirmation' },
+  );
+  confirm2.querySelector('[data-answer="yes"]').click();
+
+  const replaced = await waitFor(
+    () => (topPanel() && /has been replaced|does not add up/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the replace to finish' },
+  );
+  ok(seenMode === 'replace', 'the engine was called in replace mode', String(seenMode));
+  ok(textOf(replaced).includes('Your library has been replaced.'), 'the dialog says so');
+  ok(!/does not add up/i.test(textOf(replaced)), 'and the result verified');
+  ok(repo.count() === payload.books.length, 'the library now matches the backup',
+    `${repo.count()} vs ${payload.books.length}`);
+  ok(repo.get(extraBook.id) === undefined, 'the destination-only book was removed');
+  await dismissAll();
+
+  /* ══════════════ 9. errors are handled cleanly ═════════════════ */
+  /* ══════════ 8b. a backup identical to the library ═════════════ */
+  scenario('a backup that matches the library exactly offers nothing to do');
+
+  // The replace just above made the library identical to the archive, so
+  // this is the real no-op case rather than a contrived one.
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const noopPreview = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+  const noopAction = noopPreview.querySelector('[data-go]');
+  ok(noopAction.disabled === true,
+    'Merge is disabled, because restoring would change nothing',
+    noopAction.title);
+  noopPreview.querySelector('[data-mode="replace"]').click();
+  await tick();
+  ok(noopPreview.querySelector('[data-go]').disabled === false,
+    'but Replace stays available, since it is a different promise');
+  await dismissAll();
+
+  scenario('a snapshot failure aborts and says the library is untouched');
+
+  // Give the backup something to actually restore again, or the button
+  // would be correctly disabled and there would be nothing to fail.
+  const perturbed = repo.all()[0];
+  repo.update(perturbed.id, { rating: 1, thoughts: 'Changed after the backup was taken.' });
+  store.touch('book');
+  await frame();
+
+  const realSnapshot = repo.snapshot;
+  repo.snapshot = async () => { throw new Error('storage went away'); };
+  const beforeFail = repo.count();
+
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const preview4 = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+  // With snapshot broken, planning still works — it reads memory only.
+  preview4.querySelector('[data-go]').click();
+  const failPanel = await waitFor(
+    () => (topPanel() && /safety copy/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the snapshot failure' },
+  );
+  ok(Boolean(failPanel), 'the restore is abandoned with the engine’s reason',
+    textOf(failPanel).slice(0, 80));
+  ok(textOf(failPanel).includes('Your library was not changed'),
+    'and says explicitly that the library was NOT changed');
+  ok(failPanel.querySelector('.progress-step.is-failed') !== null,
+    'the failed stage is marked rather than spinning forever');
+  ok(Boolean(failPanel.querySelector('[data-dismiss]')), 'and the dialog can be closed');
+  ok(repo.count() === beforeFail, 'the library really is unchanged', `${repo.count()}`);
+  repo.snapshot = realSnapshot;
+  await dismissAll();
+
+  scenario('a failure partway through offers the safety copy');
+
+  repo.applyRestore = () => { throw new Error('the disk gave up'); };
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const preview5 = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+  preview5.querySelector('[data-go]').click();
+  const partialPanel = await waitFor(
+    () => (topPanel() && /stopped partway/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the partial failure' },
+  );
+  ok(Boolean(partialPanel), 'the failure is reported', textOf(partialPanel).slice(0, 70));
+  ok(/may be partly restored/i.test(textOf(partialPanel)),
+    'it does NOT falsely claim the library is untouched');
+  ok(Boolean(partialPanel.querySelector('[data-snapshot]')),
+    'and the verified copy from before is offered, which is the way back');
+
+  downloads.length = 0;
+  partialPanel.querySelector('[data-snapshot]').click();
+  await waitFor(() => downloads.length > 0, { label: 'the recovery download' });
+  const recovery = await (await fetch(downloads[downloads.length - 1].href)).blob();
+  const recoveryParsed = await M.backup.verifyBackup(recovery, { deep: true });
+  ok(recoveryParsed.books.length > 0, 'and it is a valid, complete archive',
+    `${recoveryParsed.books.length} books`);
+  repo.applyRestore = realApply;
+  await dismissAll();
+
+  /* ═════ 9b. a running operation cannot be dismissed by accident ══ */
+  scenario('an active backup cannot be dismissed');
+
+  // Slow the first thing both flows await, so there is a real window in
+  // which the operation is genuinely mid-flight. Nothing is faked: the
+  // backup really is still running while these assertions happen.
+  const realSnapshotForHold = repo.snapshot.bind(repo);
+  repo.snapshot = async () => { await sleep(1500); return realSnapshotForHold(); };
+
+  downloads.length = 0;
+  actionBtn('backup').click();
+  const holdPanel = await waitFor(() => topPanel(), { label: 'the backup dialog' });
+  ok(Boolean(holdPanel), 'the progress dialog is open');
+  ok(!/Backup complete/.test(textOf(holdPanel)), 'and the operation has not finished yet');
+
+  const headX = holdPanel.querySelector('.modal__head [data-close]');
+  ok(Boolean(headX) && headX.hidden === true,
+    'the close button is hidden rather than offered and ignored');
+  ok(getComputedStyle(headX).display === 'none',
+    'and it is genuinely not rendered', getComputedStyle(headX).display);
+
+  pressEscape();
+  await sleep(300);
+  ok(panels().length === 1 && document.querySelector('.modal__panel') === holdPanel,
+    'Escape does NOT dismiss an active backup', `${panels().length} panel(s)`);
+
+  clickScrim();
+  await sleep(300);
+  ok(panels().length === 1, 'nor does clicking the scrim', `${panels().length} panel(s)`);
+
+  clickBackdrop();
+  await sleep(300);
+  ok(panels().length === 1, 'nor clicking the backdrop outside the panel');
+
+  pressEscape(); pressEscape(); clickScrim();
+  await sleep(300);
+  ok(panels().length === 1, 'and it survives a flurry of all three');
+  ok(holdPanel.isConnected, 'the same dialog is still on screen, still reporting');
+  ok(holdPanel.querySelector('.progress-step.is-active') !== null,
+    'with a stage still marked active');
+
+  scenario('and the operation completes anyway');
+
+  await waitFor(() => /Backup complete/.test(textOf(holdPanel)),
+    { label: 'the backup to finish' });
+  ok(/Backup complete/.test(textOf(holdPanel)),
+    'the backup finished normally despite the interference');
+  await waitFor(() => downloads.length > 0, { label: 'the archive' });
+  const heldDl = downloads[downloads.length - 1];
+  ok(/\.ponyolib$/.test(heldDl.name), 'and produced a real archive', heldDl.name);
+  const heldBlob = await (await fetch(heldDl.href)).blob();
+  const heldParsed = await M.backup.verifyBackup(heldBlob, { deep: true });
+  ok(heldParsed.books.length === repo.count(),
+    'which is valid and complete', `${heldParsed.books.length} books`);
+
+  scenario('once it is finished, the dialog closes normally again');
+
+  const headX2 = holdPanel.querySelector('.modal__head [data-close]');
+  ok(headX2.hidden === false, 'the close button is offered again');
+  pressEscape();
+  await sleep(350);
+  ok(panels().length === 0, 'and Escape dismisses it', `${panels().length} panel(s)`);
+
+  scenario('the same protection applies to an active restore');
+
+  nextFile = sourceFile;
+  actionBtn('restore').click();
+  const restorePreview = await waitFor(
+    () => (topPanel() && /How should this be restored/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the preview' },
+  );
+  // The preview itself is a normal dialog and SHOULD still be dismissible.
+  ok(restorePreview.querySelector('.modal__head [data-close]').hidden === false,
+    'the preview stays dismissible, because nothing is running yet');
+  restorePreview.querySelector('[data-go]').click();
+
+  const applying = await waitFor(
+    () => (topPanel() && /Restoring your library/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the restore to start' },
+  );
+  ok(applying.querySelector('.modal__head [data-close]').hidden === true,
+    'the restore dialog holds itself shut while writing');
+  pressEscape();
+  clickScrim();
+  await sleep(300);
+  ok(panels().length === 1 && applying.isConnected,
+    'Escape and the scrim are both refused mid-restore');
+
+  await waitFor(() => /has been restored|does not add up|stopped partway|safety copy/i.test(textOf(applying)),
+    { label: 'the restore to finish' });
+  ok(/has been restored/i.test(textOf(applying)), 'and the restore completed',
+    textOf(applying).slice(0, 60));
+  ok(applying.querySelector('.modal__head [data-close]').hidden === false,
+    'after which it can be closed again');
+  pressEscape();
+  await sleep(350);
+  ok(panels().length === 0, 'and Escape works');
+
+  repo.snapshot = realSnapshotForHold;
+
+  scenario('no existing overlay behaviour regressed');
+
+  // A normal dialog: the importer. Escape must still dismiss it.
+  actionBtn('import').click();
+  const importPanel = await waitFor(
+    () => (topPanel() && /Import a book list/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the import dialog' },
+  );
+  ok(importPanel.querySelector('.modal__head [data-close]').hidden === false,
+    'an ordinary modal still shows its close button');
+  pressEscape();
+  await sleep(350);
+  ok(panels().length === 0, 'and still closes on Escape', `${panels().length} panel(s)`);
+
+  actionBtn('import').click();
+  const importAgain = await waitFor(
+    () => (topPanel() && /Import a book list/i.test(textOf(topPanel())) ? topPanel() : null),
+    { label: 'the import dialog again' },
+  );
+  ok(Boolean(importAgain), 'it reopens');
+  clickScrim();
+  await sleep(350);
+  ok(panels().length === 0, 'and still closes on a scrim click');
+
+  actionBtn('import').click();
+  await waitFor(() => topPanel(), { label: 'the import dialog a third time' });
+  document.querySelector('.modal__head [data-close]').click();
+  await sleep(350);
+  ok(panels().length === 0, 'and still closes from its own close button');
+
+  // confirmDialog is a modal too, and Escape must still mean "no".
+  const answered = M.overlays.confirmDialog({
+    title: 'Regression check', message: 'Escape should answer no.',
+    confirmLabel: 'Yes', cancelLabel: 'No',
+  });
+  await waitFor(() => topPanel(), { label: 'the confirm dialog' });
+  pressEscape();
+  ok(await answered === false, 'Escape still resolves a confirmDialog as "no"');
+  await sleep(300);
+  ok(panels().length === 0, 'and closes it');
+
+  ok(!document.body.classList.contains('is-locked'),
+    'and body scroll is unlocked after all that', document.body.className);
+
+  /* ══════════════ 10. the legacy export still works ═════════════ */
+  scenario('the legacy .json export');
+
+  downloads.length = 0;
+  view.querySelector('[data-action="export"]').click();
+  await waitFor(() => downloads.length > 0, { label: 'the json download' });
+  const jsonDl = downloads[downloads.length - 1];
+  ok(/^ponyo-library-\d{4}-\d{2}-\d{2}\.json$/.test(jsonDl.name),
+    'it still downloads a dated .json', jsonDl.name);
+  const jsonText = await (await fetch(jsonDl.href)).text();
+  const jsonData = JSON.parse(jsonText);
+  ok(jsonData.format === 'ponyo-library' && jsonData.version === 1,
+    'in the original version 1 shape');
+  ok(Array.isArray(jsonData.books) && jsonData.books.length === repo.count(),
+    'holding every book', `${jsonData.books.length}`);
+
+  /* ─────────────────────────── housekeeping ─────────────────────── */
+  scenario('housekeeping');
+  await dismissAll();
+  ok(panels().length === 0, 'no dialog is left open');
+  ok(document.querySelectorAll('#modal-root > *').length === 0, 'and the modal root is empty');
+  ok(!document.body.style.overflow || document.body.style.overflow !== 'hidden',
+    'the page is not left with scrolling locked', document.body.style.overflow || '(none)');
+  ok(window.__errors.length === 0, 'no console errors anywhere',
+    window.__errors.slice(0, 4).join(' | '));
+} catch (error) {
+  fails += 1;
+  say('THREW  ' + (error?.stack || error));
+} finally {
+  HTMLInputElement.prototype.click = realInputClick;
+  HTMLAnchorElement.prototype.click = realAnchorClick;
+}
+
+say('');
+say(fails ? `${fails} FAILURE(S) out of ${checks} checks` : `ALL PASS (${checks} checks)`);
+finish();
+</script></body></html>
