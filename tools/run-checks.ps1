@@ -116,7 +116,33 @@ $proc = Start-Process -FilePath $edgeExe -PassThru -NoNewWindow `
 # Edge running, which then makes every later run hang too. Catch it.
 try { $proc | Wait-Process -Timeout $TimeoutSec -ErrorAction Stop }
 catch { Write-Host "  (Edge did not exit in $TimeoutSec s; killing it)" -ForegroundColor DarkYellow }
+# Kill the TREE, not just the process we started.
+#
+# Stop-Process terminates one PID. Edge is a parent plus a tree of
+# msedge.exe children - renderer, GPU, network, utility, crashpad - and
+# killing the parent orphans every one of them. The orphans keep the
+# profile directory locked, so the NEXT suite launches into a directory
+# it cannot own, hangs, gets killed at the timeout and reports EMPTY
+# DUMP. That is why the failure spreads to whichever suite runs next
+# rather than staying with one.
+#
+# taskkill /T walks the tree; /F is required because a headless browser
+# will not respond to a polite close.
+# The try/catch is not optional. When Edge has already exited - the
+# normal case - taskkill writes "process not found" to stderr, and
+# PowerShell 5.1 turns a native command's redirected stderr into a
+# terminating NativeCommandError under $ErrorActionPreference = 'Stop'.
+# Without this, a clean run aborts the script right before it reads the
+# dump, which looks exactly like the hang it was added to prevent.
+try { & taskkill.exe /T /F /PID $proc.Id 2>&1 | Out-Null } catch { }
 try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
+
+# ...and wait for the tree to actually be gone before returning, so the
+# next suite starts on clean ground.
+$goneBy = (Get-Date).AddSeconds(15)
+while ((Get-Process msedge -ErrorAction SilentlyContinue) -and (Get-Date) -lt $goneBy) {
+  Start-Sleep -Milliseconds 250
+}
 
 $dom = Get-Content $dumpPath -Raw
 if ([string]::IsNullOrEmpty($dom)) {
