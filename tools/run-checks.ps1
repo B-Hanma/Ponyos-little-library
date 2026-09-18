@@ -80,7 +80,29 @@ if (Test-Path $profilePath) { Remove-Item $profilePath -Recurse -Force -ErrorAct
 
 $edgeArgs = @(
   '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
-  '--disable-extensions', "--user-data-dir=`"$scratch\$ProfileDir`""
+  '--disable-extensions', "--user-data-dir=`"$scratch\$ProfileDir`"",
+  # Make the suites hermetic.
+  #
+  # Rendering the shelf fires ~159 requests at covers.openlibrary.org.
+  # Not one assertion in any of these four suites depends on those
+  # images arriving: they check cover POLICY and the verified registry,
+  # which are pure data. The real image-failure path is cover-check's
+  # job, and that runs under run-async.ps1, which this does not touch.
+  #
+  # What the requests DO is make every run depend on a third-party CDN
+  # being reachable and quick from wherever CI happens to be. Measured
+  # locally that was 35 of regress's 102 seconds, and a rate-limited or
+  # slow datacentre route makes it unbounded.
+  #
+  # 127.0.0.1 rather than a black-hole address on purpose: nothing is
+  # listening on :443 there, so each request is refused immediately
+  # instead of waiting out a connect timeout.
+  #
+  # It must arrive as ONE argument. Unquoted, the spaces split it and
+  # Edge reads the remainder as a second URL - "Multiple targets are
+  # not supported in headless mode" - which is the same trap that the
+  # $ProfileDir comment at the top of this file describes.
+  '--host-resolver-rules="MAP covers.openlibrary.org 127.0.0.1"'
 )
 if (-not $RealTime) { $edgeArgs += "--virtual-time-budget=$BudgetMs" }
 $edgeArgs += '--dump-dom'
