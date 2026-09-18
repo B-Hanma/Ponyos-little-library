@@ -112,7 +112,27 @@ async function rejects(fn) {
   }
 }
 
-/** Drop a database, without hanging if something still holds it open. */
+/**
+ * Drop a database, without hanging if something still holds it open.
+ *
+ * `onblocked` is a NOTIFICATION, not a verdict, and this used to treat it
+ * as one. Per the spec the delete request stays live after firing it and
+ * goes on to fire `onsuccess` as soon as the last connection closes —
+ * so resolving there reported an outcome the request had not reached.
+ *
+ * It fires here because of a race the adapter cannot avoid and does not
+ * need to. Reads resolve on `request.onsuccess` rather than
+ * `tx.oncomplete`, which is correct — the data is in hand and a read has
+ * nothing to make durable — but it means the readonly transaction from
+ * the last `list()` can still be committing. `IDBDatabase.close()` only
+ * marks the connection close-pending; it cannot end a live transaction.
+ * So the delete can arrive while the connection is still open, and on a
+ * loaded CI runner it does. It passed on every developer machine and
+ * failed once in Actions, which is exactly what that race looks like.
+ *
+ * So: keep waiting for the terminal event, but not forever. A database
+ * that genuinely cannot be deleted still fails, five seconds later.
+ */
 function deleteDb(name) {
   return new Promise((resolve) => {
     let req;
@@ -122,9 +142,13 @@ function deleteDb(name) {
       resolve('threw');
       return;
     }
-    req.onsuccess = () => resolve('deleted');
-    req.onerror = () => resolve('error');
-    req.onblocked = () => resolve('blocked');
+    let wasBlocked = false;
+    const timer = setTimeout(() => resolve(wasBlocked ? 'blocked' : 'timeout'), 5000);
+    const settle = (verdict) => { clearTimeout(timer); resolve(verdict); };
+
+    req.onsuccess = () => settle('deleted');
+    req.onerror = () => settle('error');
+    req.onblocked = () => { wasBlocked = true; };
   });
 }
 
