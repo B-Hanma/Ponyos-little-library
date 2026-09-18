@@ -22,6 +22,7 @@ import {
   line as rotatingLine, SESSION, arrive,
 } from '../../data/quips.js';
 import { formatBytes, formatDate } from '../../utils/text.js';
+import { processCoverImage } from '../../utils/image.js';
 import { toast, confirmDialog, openModal } from '../components/overlays.js';
 import { celebrateFinish, sparkleAt } from '../celebrate.js';
 import { borrowMood } from '../../theme/theme-manager.js';
@@ -232,16 +233,104 @@ export function openBookDetail(ctx, bookId) {
     on(drawer, 'click', '[data-delete-book]', () => remove());
 
     /* files */
+    /**
+     * A cover she chose, made into a cover this library can draw.
+     *
+     * The order here is the whole safety property: the image is cropped,
+     * resampled and re-encoded FIRST, and storage is only touched once
+     * there is a finished 600x900 JPEG to put in it. So a picture the
+     * browser cannot decode, or one that fails halfway through, leaves
+     * the cover she already had exactly where it was — and leaves no
+     * half-written original blob behind either, because the original is
+     * never written at all.
+     */
     on(drawer, 'change', '[data-cover-input]', async (event, el) => {
       const file = el.files?.[0];
       if (!file) return;
-      if (!file.type.startsWith('image/')) { toast('That needs to be an image.'); return; }
-      if (current.coverId) cache.forget(current.coverId);
-      await repo.addFile(current.id, file, 'cover');
-      current = repo.get(current.id);
-      cache.request(current.coverId);
-      setTimeout(() => rerender(), 140);
-      refresh?.();
+      if (file.type && !file.type.startsWith('image/')) {
+        toast('That needs to be an image.');
+        el.value = '';
+        return;
+      }
+
+      const drop = el.closest('.filedrop');
+      const label = qs('[data-cover-label]', drop ?? drawer);
+      const idleText = label?.textContent ?? '';
+      const setBusy = (busy) => {
+        el.disabled = busy;
+        drop?.classList.toggle('is-busy', busy);
+        if (label) label.textContent = busy ? 'Preparing your cover…' : idleText;
+      };
+
+      setBusy(true);
+      try {
+        const processed = await processCoverImage(file);
+        if (current.coverId) cache.forget(current.coverId);
+        await repo.addFile(current.id, processed.file, 'cover');
+        current = repo.get(current.id);
+        cache.request(current.coverId);
+        setBusy(false);
+        el.value = '';
+        setTimeout(() => rerender(), 140);
+        refresh?.();
+      } catch (error) {
+        setBusy(false);
+        el.value = '';
+        toast(error?.message ?? 'That image could not be prepared.');
+      }
+    });
+
+    /**
+     * Give a book its original cover back.
+     *
+     * A custom cover can be referenced from two places — `book.coverId`
+     * and a `fileId` on the separate covers override — so both are
+     * cleared, each through the API that already owns it. Nothing new is
+     * stored and nothing is written by hand.
+     *
+     * The repository persists in the background and swallows write
+     * failures by design, which is right for a library that should keep
+     * working when storage misbehaves but wrong for a button that has
+     * just promised something. So the result is CHECKED: if a reference
+     * or a blob is still there afterwards, this reports a failure rather
+     * than a cheerful message over a cover that never went away.
+     */
+    on(drawer, 'click', '[data-remove-cover]', async (event, el) => {
+      const override = repo.getCover?.(current.id);
+      const fileIds = [current.coverId, override?.fileId].filter(Boolean);
+      if (!fileIds.length) return;
+
+      const label = el.textContent;
+      el.disabled = true;
+      el.textContent = 'Removing…';
+
+      try {
+        if (override?.fileId) repo.clearCover(current.id);
+        if (current.coverId) await repo.removeFile(current.id, current.coverId);
+
+        current = repo.get(current.id);
+        const stillReferenced = current.coverId || repo.getCover?.(current.id)?.fileId;
+        const orphans = [];
+        for (const id of fileIds) {
+          if (await repo.getFile(id)) orphans.push(id);
+        }
+        if (stillReferenced || orphans.length) {
+          throw new Error('That cover could not be fully removed.');
+        }
+
+        for (const id of fileIds) cache.forget(id);
+        rerender();
+        refresh?.();
+        toast('Back to the cover it came with.');
+      } catch (error) {
+        // Re-read rather than guess: whatever state storage is actually
+        // in, the drawer should be showing it.
+        current = repo.get(current.id) ?? current;
+        el.disabled = false;
+        el.textContent = label;
+        rerender();
+        toast(error?.message ?? 'That cover could not be removed.');
+      }
     });
 
     on(drawer, 'change', '[data-file-input]', async (event, el) => {
@@ -390,6 +479,16 @@ function template(book, cache) {
   const cover = coverMarkup(book, cache);
   const fraction = progressFraction(book);
 
+  /**
+   * The id of a picture she uploaded herself, from either of the two
+   * places one can live: the book record, or an override in the separate
+   * covers store. These are exactly the two `resolveCover` treats as an
+   * upload, so the remove action appears precisely when a custom cover
+   * is what she is actually looking at — and not for an Open Library
+   * photograph, a pasted URL, or the drawn fallback.
+   */
+  const uploadedCoverId = cache?.forBook?.(book)?.override?.fileId || book.coverId || '';
+
   return `
   <div class="drawer__head">
     <span class="drawer__grab"></span>
@@ -532,8 +631,13 @@ function template(book, cache) {
       </label>
       <label class="filedrop" style="margin-top:var(--sp-2)">
         <input type="file" accept="image/*" hidden data-cover-input>
-        <span>${book.coverId ? 'Replace the cover image' : 'Use your own cover image'}</span>
+        <span data-cover-label>${uploadedCoverId ? 'Replace the cover image' : 'Use your own cover image'}</span>
+        <span class="tiny mute-2">Cropped to fit the shelf automatically</span>
       </label>
+      ${uploadedCoverId ? `
+      <div class="cover-undo">
+        <button class="btn btn--ghost btn--sm" type="button" data-remove-cover>Remove custom cover</button>
+      </div>` : ''}
     </div>
 
     <div class="detail__section" style="display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);flex-wrap:wrap">

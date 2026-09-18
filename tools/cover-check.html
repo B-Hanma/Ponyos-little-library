@@ -1,0 +1,823 @@
+<!doctype html><html><head><meta charset="utf-8"><title>cover check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap;padding:1rem"></pre>
+<script>
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+/**
+ * cover-check.html — uploaded covers, cropped and re-encoded for real.
+ *
+ * Run with tools/run-async.ps1. Real time, because decoding, resampling
+ * and JPEG encoding are all genuinely asynchronous.
+ *
+ * ── IT LOOKS AT PIXELS, NOT RETURN VALUES ─────────────────────────
+ * A function that claims to have produced a 600x900 JPEG is not
+ * evidence. So every processing test decodes the blob the code actually
+ * produced and measures it: dimensions from the decoded bitmap, format
+ * from the file's magic bytes, and the crop itself from sampled pixel
+ * colours. Sources are built with deliberate red/blue halves so that a
+ * centre crop, a mirrored crop and a stretched crop all look different.
+ */
+
+const out = document.getElementById('out');
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent += s + '\n'; };
+let fails = 0;
+let checks = 0;
+const ok = (cond, label, extra = '') => {
+  checks += 1;
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+const scenario = (name) => say(`\n-- ${name} --`);
+
+function finish() {
+  const report = lines.join('\n');
+  const sink = new URLSearchParams(location.search).get('sink');
+  if (!sink) return;
+  const blob = new Blob([report], { type: 'text/plain' });
+  if (!navigator.sendBeacon(sink, blob)) {
+    fetch(sink, { method: 'POST', mode: 'no-cors', body: report, keepalive: true }).catch(() => {});
+  }
+}
+
+/* ─────────────────────────────── helpers ────────────────────────── */
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(predicate, { timeout = 20000, label = 'condition' } = {}) {
+  const started = performance.now();
+  for (;;) {
+    let value;
+    try { value = predicate(); } catch { value = null; }
+    if (value) return value;
+    if (performance.now() - started > timeout) throw new Error(`timed out waiting for ${label}`);
+    await sleep(25);
+  }
+}
+
+async function rejects(fn) {
+  try { await fn(); return { threw: false, name: '', message: '' }; }
+  catch (error) {
+    return { threw: true, name: error?.name ?? '', message: error?.message ?? String(error) };
+  }
+}
+
+/** Build a source image of an exact size, with a pattern we can recognise. */
+function makeSource(width, height, draw, { type = 'image/png', quality } = {}) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  draw(ctx, width, height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        canvas.width = 0; canvas.height = 0;
+        blob ? resolve(blob) : reject(new Error('could not build the source image'));
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+/** Left half red, right half blue. Reveals a horizontal crop exactly. */
+const splitVertically = (ctx, w, h) => {
+  ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, w / 2, h);
+  ctx.fillStyle = '#0000ff'; ctx.fillRect(w / 2, 0, w / 2, h);
+};
+
+/** Top half red, bottom half blue. Reveals a vertical crop exactly. */
+const splitHorizontally = (ctx, w, h) => {
+  ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, w, h / 2);
+  ctx.fillStyle = '#0000ff'; ctx.fillRect(0, h / 2, w, h / 2);
+};
+
+/** Decode a blob and expose its pixels for measurement. */
+async function inspect(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+  const { width, height } = bitmap;
+  bitmap.close?.();
+  canvas.width = 0; canvas.height = 0;
+
+  const at = (x, y) => {
+    const i = ((y * width) + x) * 4;
+    return [data[i], data[i + 1], data[i + 2]];
+  };
+  // JPEG is lossy, so colour tests ask "which channel dominates" rather
+  // than for exact values.
+  const isRed = (x, y) => { const [r, g, b] = at(x, y); return r > 170 && g < 95 && b < 95; };
+  const isBlue = (x, y) => { const [r, g, b] = at(x, y); return b > 170 && r < 95 && g < 95; };
+  return { width, height, at, isRed, isBlue };
+}
+
+/** The first bytes of a file, to identify the real format. */
+async function magic(blob, count = 4) {
+  return Array.from(new Uint8Array(await blob.slice(0, count).arrayBuffer()));
+}
+
+/** Does this JPEG carry an EXIF block? */
+async function hasExif(blob) {
+  const bytes = new Uint8Array(await blob.slice(0, 4096).arrayBuffer());
+  const needle = [0x45, 0x78, 0x69, 0x66]; // "Exif"
+  outer: for (let i = 0; i <= bytes.length - 4; i += 1) {
+    for (let j = 0; j < 4; j += 1) if (bytes[i + j] !== needle[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+/** Length of the red run along a row, and down a column. For distortion. */
+function redRunAcross(img, y) {
+  let count = 0;
+  for (let x = 0; x < img.width; x += 1) if (img.isRed(x, y)) count += 1;
+  return count;
+}
+function redRunDown(img, x) {
+  let count = 0;
+  for (let y = 0; y < img.height; y += 1) if (img.isRed(x, y)) count += 1;
+  return count;
+}
+
+say('cover-check start');
+
+let M;
+try {
+  M = {
+    image: await import('/src/utils/image.js'),
+    policy: await import('/src/data/cover-policy.js'),
+    adapter: await import('/src/storage/adapter.js'),
+    repo: await import('/src/storage/repository.js'),
+    store: await import('/src/state/store.js'),
+    cache: await import('/src/ui/cover-urls.js'),
+    app: await import('/src/ui/app.js'),
+    detail: await import('/src/ui/views/book-detail.js'),
+    seed: await import('/src/data/seed-books.js'),
+    theme: await import('/src/theme/theme-manager.js'),
+    portraits: await import('/src/data/portraits.js'),
+  };
+} catch (error) {
+  say('THREW while importing  ' + (error?.stack || error));
+  say('1 FAILURE(S)');
+  finish();
+  throw error;
+}
+
+const {
+  processCoverImage, coverCrop, ImageProcessingError,
+  COVER_WIDTH, COVER_HEIGHT, COVER_MIME, COVER_QUALITY,
+} = M.image;
+
+try {
+  /* ══════════════════ 1. the cropping maths ════════════════════════ */
+  scenario('the crop rectangle, as pure arithmetic');
+
+  ok(COVER_WIDTH === 600 && COVER_HEIGHT === 900,
+    'the canonical cover is 600 x 900', `${COVER_WIDTH} x ${COVER_HEIGHT}`);
+  ok(Math.abs((COVER_WIDTH / COVER_HEIGHT) - (2 / 3)) < 1e-9,
+    'which is exactly 2:3', String(COVER_WIDTH / COVER_HEIGHT));
+  ok(COVER_MIME === 'image/jpeg' && COVER_QUALITY === 0.85,
+    'encoded as JPEG at 85%', `${COVER_MIME} @ ${COVER_QUALITY}`);
+
+  const already = coverCrop(1000, 1500);
+  ok(already.axis === 'none' && already.sx === 0 && already.sy === 0
+    && already.sw === 1000 && already.sh === 1500,
+    'an image already 2:3 is not cropped at all', JSON.stringify(already));
+
+  const wide = coverCrop(1200, 600);
+  ok(wide.axis === 'horizontal', 'a landscape image is cropped horizontally', wide.axis);
+  ok(wide.sh === 600 && wide.sw === 400, 'keeping full height, trimming width',
+    `${wide.sw} x ${wide.sh}`);
+  ok(wide.sx === 400 && wide.sy === 0, 'from the centre', `sx=${wide.sx} sy=${wide.sy}`);
+  ok(wide.sx + wide.sw === 1200 - wide.sx, 'with equal trim on both sides');
+
+  const tall = coverCrop(600, 1800);
+  ok(tall.axis === 'vertical', 'a very tall image is cropped vertically', tall.axis);
+  ok(tall.sw === 600 && tall.sh === 900, 'keeping full width, trimming height',
+    `${tall.sw} x ${tall.sh}`);
+  ok(tall.sy === 450 && tall.sx === 0, 'from the centre', `sx=${tall.sx} sy=${tall.sy}`);
+
+  const square = coverCrop(800, 800);
+  ok(square.axis === 'horizontal',
+    'a square is wider than 2:3, so it is cropped horizontally', square.axis);
+  ok(square.sh === 800 && square.sw === 533, 'to 533 x 800', `${square.sw} x ${square.sh}`);
+
+  const smallCrop = coverCrop(20, 30);
+  ok(smallCrop.axis === 'none', 'a tiny 2:3 image needs no crop either',
+    JSON.stringify(smallCrop));
+  const narrow = coverCrop(10, 100);
+  ok(narrow.axis === 'vertical' && narrow.sw === 10 && narrow.sh === 15,
+    'and a 1:10 sliver is cropped down to 2:3', `${narrow.sw} x ${narrow.sh}`);
+
+  scenario('every crop rectangle is itself 2:3, which is why nothing stretches');
+
+  const shapes = [[1000, 1500], [1200, 600], [600, 1800], [800, 800], [20, 30], [10, 100],
+    [4032, 3024], [1080, 1920], [3000, 1000], [37, 41]];
+  let worst = 0;
+  for (const [w, h] of shapes) {
+    const c = coverCrop(w, h);
+    const ratio = c.sw / c.sh;
+    worst = Math.max(worst, Math.abs(ratio - (2 / 3)));
+  }
+  // Rounding to whole pixels is the only source of error, and it is
+  // largest on the tiniest images.
+  ok(worst < 0.05, 'the crop ratio is 2:3 for every shape tried',
+    `worst deviation ${worst.toFixed(5)} across ${shapes.length} shapes`);
+
+  for (const [w, h] of shapes) {
+    const c = coverCrop(w, h);
+    if (c.sx < 0 || c.sy < 0 || c.sx + c.sw > w || c.sy + c.sh > h) {
+      ok(false, `the crop for ${w}x${h} stays inside the source`, JSON.stringify(c));
+    }
+  }
+  ok(true, 'and every crop rectangle stays inside its source');
+
+  ok((await rejects(async () => coverCrop(0, 100))).threw,
+    'a zero-sized image is refused rather than divided by');
+
+  /* ══════════════════ 2. real images, measured ═════════════════════ */
+  scenario('a 2:3 portrait image');
+
+  const portraitSrc = await makeSource(600, 900, splitHorizontally);
+  const portrait = await processCoverImage(portraitSrc, { name: 'portrait.png' });
+  const portraitOut = await inspect(portrait.blob);
+  ok(portraitOut.width === 600 && portraitOut.height === 900,
+    'the output is exactly 600 x 900', `${portraitOut.width} x ${portraitOut.height}`);
+  ok(portrait.crop.axis === 'none', 'and nothing was cropped');
+  ok(portraitOut.isRed(300, 200) && portraitOut.isBlue(300, 700),
+    'with the halves where they started, unmirrored');
+
+  scenario('a wider landscape image is centre-cropped horizontally');
+
+  // 1200x600, red left half / blue right half. The 2:3 crop is the
+  // middle 400px, so the output must be half red, half blue.
+  const landscapeSrc = await makeSource(1200, 600, splitVertically);
+  const landscape = await processCoverImage(landscapeSrc, { name: 'landscape.png' });
+  const landscapeOut = await inspect(landscape.blob);
+  ok(landscapeOut.width === 600 && landscapeOut.height === 900,
+    'the output is exactly 600 x 900', `${landscapeOut.width} x ${landscapeOut.height}`);
+  ok(landscape.crop.axis === 'horizontal' && landscape.crop.sw === 400,
+    'the middle 400px were taken', JSON.stringify(landscape.crop));
+  ok(landscapeOut.isRed(150, 450), 'the left of the output is red');
+  ok(landscapeOut.isBlue(450, 450), 'the right of the output is blue');
+  ok(!landscapeOut.isBlue(150, 450) && !landscapeOut.isRed(450, 450),
+    'and they are not swapped, so the crop is not mirrored');
+
+  scenario('a very tall image is centre-cropped vertically');
+
+  const tallSrc = await makeSource(600, 1800, splitHorizontally);
+  const tallOut0 = await processCoverImage(tallSrc, { name: 'tall.png' });
+  const tallOut = await inspect(tallOut0.blob);
+  ok(tallOut.width === 600 && tallOut.height === 900,
+    'the output is exactly 600 x 900', `${tallOut.width} x ${tallOut.height}`);
+  ok(tallOut0.crop.axis === 'vertical' && tallOut0.crop.sh === 900,
+    'the middle 900px were taken', JSON.stringify(tallOut0.crop));
+  ok(tallOut.isRed(300, 225), 'the top of the output is red');
+  ok(tallOut.isBlue(300, 675), 'the bottom is blue');
+
+  scenario('a square image');
+
+  const squareSrc = await makeSource(800, 800, splitVertically);
+  const squareRes = await processCoverImage(squareSrc, { name: 'square.png' });
+  const squareOut = await inspect(squareRes.blob);
+  ok(squareOut.width === 600 && squareOut.height === 900,
+    'the output is exactly 600 x 900', `${squareOut.width} x ${squareOut.height}`);
+  ok(squareRes.crop.axis === 'horizontal', 'cropped horizontally');
+  ok(squareOut.isRed(150, 450) && squareOut.isBlue(450, 450),
+    'with the centre of the square preserved');
+
+  scenario('very small images are handled gracefully');
+
+  const smallSrc = await makeSource(20, 30, splitHorizontally);
+  const small = await processCoverImage(smallSrc, { name: 'small.png' });
+  const smallOut = await inspect(small.blob);
+  ok(smallOut.width === 600 && smallOut.height === 900,
+    'a 20 x 30 image still becomes exactly 600 x 900',
+    `${smallOut.width} x ${smallOut.height}`);
+  ok(smallOut.isRed(300, 200) && smallOut.isBlue(300, 700),
+    'and is upscaled rather than rejected');
+
+  const sliverSrc = await makeSource(10, 100, splitHorizontally);
+  const sliver = await processCoverImage(sliverSrc, { name: 'sliver.png' });
+  const sliverOut = await inspect(sliver.blob);
+  ok(sliverOut.width === 600 && sliverOut.height === 900,
+    'so does a 10 x 100 sliver', `${sliverOut.width} x ${sliverOut.height}`);
+
+  const onePixel = await makeSource(1, 1, (ctx) => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 1, 1); });
+  const onePixelOut = await inspect((await processCoverImage(onePixel)).blob);
+  ok(onePixelOut.width === 600 && onePixelOut.height === 900,
+    'and even a single pixel does not break it',
+    `${onePixelOut.width} x ${onePixelOut.height}`);
+
+  /* ══════════════════ 3. format and quality ════════════════════════ */
+  scenario('PNG in, JPEG out');
+
+  const pngMagic = await magic(portraitSrc);
+  ok(pngMagic[0] === 0x89 && pngMagic[1] === 0x50,
+    'the source really was a PNG', pngMagic.join(','));
+  ok(portrait.type === COVER_MIME && portrait.blob.type === 'image/jpeg',
+    'the output declares image/jpeg', portrait.blob.type);
+  const jpegMagic = await magic(portrait.blob);
+  ok(jpegMagic[0] === 0xFF && jpegMagic[1] === 0xD8 && jpegMagic[2] === 0xFF,
+    'and its bytes really are a JPEG, not just a relabelled PNG',
+    jpegMagic.map((b) => b.toString(16)).join(' '));
+  ok(portrait.file instanceof File && /\.jpg$/.test(portrait.file.name),
+    'and it is handed over as a .jpg File', portrait.file?.name);
+  ok(portrait.file.type === 'image/jpeg', 'with the right MIME type on the File too');
+
+  scenario('JPEG in, JPEG out');
+
+  const jpegSrc = await makeSource(1400, 700, splitVertically, { type: 'image/jpeg', quality: 0.9 });
+  const fromJpeg = await processCoverImage(jpegSrc, { name: 'photo.jpeg' });
+  const fromJpegOut = await inspect(fromJpeg.blob);
+  ok(fromJpegOut.width === 600 && fromJpegOut.height === 900,
+    'a JPEG source also produces exactly 600 x 900',
+    `${fromJpegOut.width} x ${fromJpegOut.height}`);
+  ok((await magic(fromJpeg.blob))[0] === 0xFF, 'and a real JPEG out');
+  ok(/\.jpg$/.test(fromJpeg.file.name),
+    'the .jpeg extension is normalised to .jpg', fromJpeg.file.name);
+
+  scenario('the output stays small, and carries no metadata');
+
+  // A photograph, at phone-camera dimensions: smooth gradients and soft
+  // shapes. This is the case that actually matters, because it is what
+  // she would really be picking off her camera roll.
+  const photo = await makeSource(3000, 2000, (ctx, w, h) => {
+    const sky = ctx.createLinearGradient(0, 0, w * 0.3, h);
+    sky.addColorStop(0, '#2b4a6f');
+    sky.addColorStop(0.55, '#d9a05b');
+    sky.addColorStop(1, '#1b2a36');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 30; i += 1) {
+      const cx = ((i * 431) % w);
+      const cy = ((i * 277) % h);
+      const r = 80 + ((i * 53) % 320);
+      const blob = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      blob.addColorStop(0, `rgba(255,255,255,${0.05 + ((i % 5) * 0.03)})`);
+      blob.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = blob;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, { type: 'image/jpeg', quality: 0.92 });
+
+  const fromPhoto = await processCoverImage(photo, { name: 'IMG_2043.JPG' });
+  ok(fromPhoto.bytes < photo.size / 2,
+    'a real photograph comes out far smaller than it went in',
+    `${(photo.size / 1024).toFixed(0)} KB -> ${(fromPhoto.bytes / 1024).toFixed(0)} KB`);
+  ok(fromPhoto.bytes < 300 * 1024, 'and is a reasonable size for a cover',
+    `${(fromPhoto.bytes / 1024).toFixed(0)} KB`);
+  ok(fromPhoto.source.width === 3000 && fromPhoto.source.height === 2000,
+    'the result reports the source dimensions it worked from',
+    `${fromPhoto.source.width} x ${fromPhoto.source.height}`);
+  ok(await hasExif(fromPhoto.blob) === false,
+    'the canvas re-encode leaves no EXIF block behind');
+
+  // Pure high-frequency noise is the one thing JPEG is worse at than
+  // PNG, so it is asserted as BOUNDED rather than as always shrinking.
+  // Claiming "always smaller" would be claiming something untrue.
+  const noisy = await makeSource(1600, 2400, (ctx, w, h) => {
+    const img = ctx.createImageData(w, h);
+    for (let i = 0; i < img.data.length; i += 4) {
+      img.data[i] = (i * 7) & 0xFF;
+      img.data[i + 1] = (i * 13) & 0xFF;
+      img.data[i + 2] = (i * 29) & 0xFF;
+      img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+  const fromNoisy = await processCoverImage(noisy, { name: 'noise.png' });
+  ok(fromNoisy.bytes < 400 * 1024,
+    'and even pure noise, which JPEG hates, stays bounded',
+    `${(noisy.size / 1024).toFixed(0)} KB -> ${(fromNoisy.bytes / 1024).toFixed(0)} KB`);
+
+  scenario('nothing is stretched');
+
+  // A 300x300 red square centred in a 1200x600 landscape. The crop and
+  // the scale are uniform, so it must still measure square afterwards.
+  const squareInWide = await makeSource(1200, 600, (ctx, w, h) => {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#ff0000'; ctx.fillRect((w - 300) / 2, (h - 300) / 2, 300, 300);
+  });
+  const geo = await inspect((await processCoverImage(squareInWide)).blob);
+  const runAcross = redRunAcross(geo, 450);
+  const runDown = redRunDown(geo, 300);
+  ok(runAcross > 400 && runDown > 400, 'the test square survived the crop',
+    `${runAcross} x ${runDown}`);
+  ok(Math.abs(runAcross - runDown) <= 6,
+    'and is still square, so the scale was uniform on both axes',
+    `${runAcross} wide vs ${runDown} tall`);
+
+  const expected = Math.round(300 * (600 / 400));
+  ok(Math.abs(runAcross - expected) <= 8,
+    'at exactly the size uniform scaling predicts',
+    `measured ${runAcross}, predicted ${expected}`);
+
+  /* ══════════════════ 4. refusing what it cannot do ════════════════ */
+  scenario('bad input is refused, cleanly');
+
+  const notImage = await rejects(() => processCoverImage(
+    new File(['this is text, not a picture'], 'notes.txt', { type: 'text/plain' }),
+  ));
+  ok(notImage.threw && notImage.name === 'ImageProcessingError',
+    'a text file is refused', notImage.message);
+
+  const brokenImage = await rejects(() => processCoverImage(
+    new File([new Uint8Array([0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4])], 'broken.png', { type: 'image/png' }),
+  ));
+  ok(brokenImage.threw && brokenImage.name === 'ImageProcessingError',
+    'a truncated image is refused', brokenImage.message);
+
+  const notAFile = await rejects(() => processCoverImage(null));
+  ok(notAFile.threw, 'and so is nothing at all', notAFile.message);
+
+  /* ══════════════════ 5. cover-policy precedence ═══════════════════ */
+  scenario('the cover-policy decision order is unchanged');
+
+  const { resolveCover, COVER_SOURCE, COVER_STATUS } = M.policy;
+  const plain = { coverUrl: '', coverId: '', coverSource: '' };
+  ok(resolveCover(plain).source === COVER_SOURCE.GENERATED
+    && resolveCover(plain).status === COVER_STATUS.FALLBACK,
+    'nothing at all falls back to the drawn cover');
+  ok(resolveCover({ ...plain, coverUrl: 'https://covers/x.jpg' }).source === COVER_SOURCE.OPENLIBRARY,
+    'a shipped URL reads as Open Library');
+  ok(resolveCover(plain, { override: { url: 'https://example.com/m.jpg', source: 'manual' } }).source
+    === COVER_SOURCE.MANUAL, 'a pasted URL override beats the book record');
+  ok(resolveCover({ ...plain, coverUrl: 'https://covers/x.jpg' },
+    { override: { fileId: 'fl_1' }, objectUrl: 'blob:z' }).source === COVER_SOURCE.UPLOAD,
+    'and an upload beats everything');
+  ok(resolveCover({ ...plain, coverId: 'fl_2' }, { objectUrl: 'blob:y' }).url === 'blob:y',
+    'an uploaded cover resolves to its object URL');
+
+  /* ══════════════════ 6. through the real drawer ═══════════════════ */
+  scenario('uploading through the book page');
+
+  const html = await (await fetch('/index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const copy = l.cloneNode();
+    copy.setAttribute('href', new URL(l.getAttribute('href'), location.origin).pathname);
+    document.head.append(copy);
+  }
+  document.body.insertAdjacentHTML('beforeend', `<div id="shell">${doc.body.innerHTML}</div>`);
+  document.querySelectorAll('#shell script').forEach((s) => s.remove());
+  document.getElementById('welcome')?.remove();
+  document.querySelector('#shell #landing')?.remove();
+  document.getElementById('app').hidden = false;
+
+  await M.portraits.loadPortraits();
+  const repo = M.repo.createRepository(M.adapter.createMemoryAdapter());
+  await repo.init({ seedBooks: M.seed.SEED_BOOKS, seedVersion: M.seed.SEED_VERSION });
+  const prefs = { ...M.store.DEFAULT_PREFS };
+  M.theme.applyPreferences(prefs);
+  const store = M.store.createStore({ prefs, ready: true });
+  const cache = M.cache.createCoverCache(repo);
+  const ctx = { repo, store, cache };
+  const app = M.app.createApp(ctx);
+  app.render();
+  await tick();
+
+  const book = repo.all()[0];
+  const fileCount = async () => (await repo.snapshot()).files.length;
+
+  /**
+   * Opening a book closes the previous drawer, which then sits in the
+   * DOM for its exit animation. A document-wide querySelector can
+   * therefore hand back the OLD drawer's controls — whose handlers are
+   * still bound, so an upload driven through them updates the library
+   * while the drawer actually on screen never re-renders. Everything
+   * below is scoped to the live drawer for that reason.
+   */
+  const liveDrawer = () => document.querySelector('#drawer-root .drawer:not(.is-closing)');
+  const inDrawer = (selector) => liveDrawer()?.querySelector(selector) ?? null;
+
+  /** Answer the drawer's hidden file input with a chosen File. */
+  async function uploadCover(target, file) {
+    M.detail.openBookDetail(ctx, target.id);
+    const input = await waitFor(() => inDrawer('[data-cover-input]'), { label: 'the cover input' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return input;
+  }
+
+  ok(!book.coverId, 'the book starts with no uploaded cover', book.coverId || '(none)');
+  ok(await fileCount() === 0, 'and storage is empty', `${await fileCount()}`);
+
+  const firstUpload = await makeSource(1200, 600, splitVertically);
+  const firstInput = await uploadCover(
+    book, new File([firstUpload], 'from-my-phone.png', { type: 'image/png' }),
+  );
+
+  // setBusy runs synchronously before the first await, so the control is
+  // already showing its processing state at this point.
+  ok(firstInput.disabled === true, 'the control disables itself while preparing');
+  const busyLabel = inDrawer('[data-cover-label]');
+  ok(/Preparing/i.test(busyLabel?.textContent ?? ''),
+    'and says so', (busyLabel?.textContent ?? '').trim());
+  ok(firstInput.closest('.filedrop')?.classList.contains('is-busy'),
+    'with the drop zone marked busy');
+
+  await waitFor(() => repo.get(book.id)?.coverId, { label: 'the cover to be stored' });
+  const stored = repo.get(book.id);
+  ok(Boolean(stored.coverId), 'the cover was stored', stored.coverId);
+  ok(await fileCount() === 1, 'as exactly one blob', `${await fileCount()}`);
+
+  const storedFile = await repo.getFile(stored.coverId);
+  ok(storedFile?.type === 'image/jpeg',
+    'the stored blob is a JPEG, not the original PNG', storedFile?.type);
+  ok(/\.jpg$/.test(storedFile?.name ?? ''), 'named .jpg', storedFile?.name);
+  const storedOut = await inspect(storedFile.blob);
+  ok(storedOut.width === 600 && storedOut.height === 900,
+    'and what actually reached storage is 600 x 900',
+    `${storedOut.width} x ${storedOut.height}`);
+  ok(storedOut.isRed(150, 450) && storedOut.isBlue(450, 450),
+    'centre-cropped, exactly as the utility does it');
+  ok(storedFile.blob.size < firstUpload.size,
+    'and smaller than the file she picked',
+    `${(firstUpload.size / 1024).toFixed(0)} KB -> ${(storedFile.blob.size / 1024).toFixed(0)} KB`);
+
+  scenario('replacing a cover leaves no orphan behind');
+
+  const oldCoverId = stored.coverId;
+  const replacement = await makeSource(600, 1800, splitHorizontally);
+  await uploadCover(repo.get(book.id), new File([replacement], 'second.png', { type: 'image/png' }));
+  await waitFor(() => repo.get(book.id)?.coverId !== oldCoverId,
+    { label: 'the cover to be replaced' });
+
+  const replaced = repo.get(book.id);
+  ok(replaced.coverId !== oldCoverId, 'the book points at a new blob', replaced.coverId);
+  ok(await fileCount() === 1, 'and storage still holds exactly one file, not two',
+    `${await fileCount()}`);
+  ok(await repo.getFile(oldCoverId) === undefined,
+    'the superseded blob is gone rather than orphaned');
+  const replacedOut = await inspect((await repo.getFile(replaced.coverId)).blob);
+  ok(replacedOut.width === 600 && replacedOut.height === 900, 'the new cover is 600 x 900');
+  ok(replacedOut.isRed(300, 225) && replacedOut.isBlue(300, 675),
+    'and was cropped vertically, as a tall source should be');
+
+  scenario('a failed upload leaves the existing cover exactly as it was');
+
+  const keptId = replaced.coverId;
+  const keptBytes = (await repo.getFile(keptId)).blob.size;
+  const filesBefore = await fileCount();
+
+  const badInput = await uploadCover(
+    repo.get(book.id),
+    new File(['not a picture at all'], 'sneaky.png', { type: 'image/png' }),
+  );
+  await waitFor(() => badInput.disabled === false, { label: 'the failure to settle' });
+  await sleep(200);
+
+  const after = repo.get(book.id);
+  ok(after.coverId === keptId, 'the book still points at the old cover', after.coverId);
+  ok((await repo.getFile(keptId))?.blob?.size === keptBytes,
+    'whose bytes are untouched', `${keptBytes}`);
+  ok(await fileCount() === filesBefore,
+    'and no partial or original blob was written',
+    `${await fileCount()} vs ${filesBefore}`);
+  ok(badInput.disabled === false && !badInput.closest('.filedrop')?.classList.contains('is-busy'),
+    'the control is usable again rather than stuck preparing');
+  ok(M.policy.resolveCover(after, cache.forBook(after)).source === 'upload',
+    'and the cover still resolves as her upload');
+
+  scenario('removing a custom cover falls back correctly');
+
+  await repo.removeFile(book.id, keptId);
+  const bare = repo.get(book.id);
+  ok(!bare.coverId, 'the reference is cleared', bare.coverId || '(none)');
+  ok(await fileCount() === 0, 'the blob is gone', `${await fileCount()}`);
+  const fallback = M.policy.resolveCover(bare, cache.forBook(bare));
+  ok(fallback.source === (bare.coverUrl ? 'openlibrary' : 'generated'),
+    'and the book falls back down the policy order',
+    `${fallback.source} / ${fallback.status}`);
+
+  // A book that shipped with an Open Library photograph must fall back to
+  // THAT, not all the way to the drawn cover.
+  const withUrl = repo.all().find((b) => b.coverUrl);
+  if (withUrl) {
+    const cover = await makeSource(600, 900, splitHorizontally);
+    await uploadCover(withUrl, new File([cover], 'mine.png', { type: 'image/png' }));
+    await waitFor(() => repo.get(withUrl.id)?.coverId, { label: 'the upload' });
+    const uploadedId = repo.get(withUrl.id).coverId;
+    ok(M.policy.resolveCover(repo.get(withUrl.id), cache.forBook(repo.get(withUrl.id))).source === 'upload',
+      'her upload wins over the shipped photograph');
+    await repo.removeFile(withUrl.id, uploadedId);
+    const back = repo.get(withUrl.id);
+    ok(M.policy.resolveCover(back, cache.forBook(back)).source === 'openlibrary',
+      'and removing it falls back to the shipped photograph, not to the drawn one',
+      M.policy.resolveCover(back, cache.forBook(back)).source);
+  }
+
+  scenario('existing covers are not reprocessed');
+
+  // A blob already in storage from before this phase, in its original
+  // format. Nothing should touch it until she replaces it herself.
+  const legacyBook = repo.all()[5];
+  const legacyBytes = new Uint8Array(await (await makeSource(400, 400, splitVertically)).arrayBuffer());
+  const legacyRecord = await repo.addFile(
+    legacyBook.id,
+    new File([legacyBytes], 'legacy.png', { type: 'image/png' }),
+    'cover',
+  );
+  const legacyStored = await repo.getFile(legacyRecord.id);
+  ok(legacyStored.type === 'image/png',
+    'a cover stored the old way keeps its original type', legacyStored.type);
+  const legacyOut = await inspect(legacyStored.blob);
+  ok(legacyOut.width === 400 && legacyOut.height === 400,
+    'and its original dimensions', `${legacyOut.width} x ${legacyOut.height}`);
+  ok(M.policy.resolveCover(repo.get(legacyBook.id), cache.forBook(repo.get(legacyBook.id))).source === 'upload',
+    'it still displays as her upload');
+
+  /* ══════════════ 7. removing a custom cover, from the UI ═════════ */
+  scenario('the Remove custom cover action appears only when there is one');
+
+  const toasts = () => Array.from(document.querySelectorAll('.toast__msg')).map((n) => n.textContent);
+  const removeBtn = () => inDrawer('[data-remove-cover]');
+
+  // A book that shipped with an Open Library photograph, so the fallback
+  // after removal is something specific rather than the drawn cover.
+  const shipped = repo.all().find((b) => b.coverUrl && !b.coverId);
+  ok(Boolean(shipped), 'found a book with a shipped photograph', shipped?.title);
+
+  M.detail.openBookDetail(ctx, shipped.id);
+  await waitFor(() => inDrawer('[data-cover-input]'), { label: 'the drawer' });
+  ok(!removeBtn(), 'a book with no custom cover does not offer removal');
+  ok(Boolean(inDrawer('[data-delete-book]')),
+    'while the separate delete-the-book control is still there, unchanged');
+
+  const mineSrc = await makeSource(1000, 700, splitVertically);
+  await uploadCover(shipped, new File([mineSrc], 'mine.png', { type: 'image/png' }));
+  await waitFor(() => repo.get(shipped.id)?.coverId, { label: 'the upload' });
+  await waitFor(() => removeBtn(), { label: 'the remove action' });
+
+  const button = removeBtn();
+  ok(Boolean(button), 'once a custom cover exists, the action appears');
+  ok(/remove custom cover/i.test(button.textContent), 'and says exactly what it removes',
+    button.textContent.trim());
+  ok(!/delete|book/i.test(button.textContent),
+    'without any wording that could be confused with deleting the book');
+  ok(button.classList.contains('btn--ghost') && button.classList.contains('btn--sm'),
+    'styled as a secondary action next to uploading', button.className);
+  ok(Boolean(button.closest('.detail__section')?.querySelector('[data-cover-input]')),
+    'and it sits in the same section as the upload control');
+
+  scenario('removing it clears the cover and the blob, and the fallback returns');
+
+  const mineId = repo.get(shipped.id).coverId;
+  const filesWithMine = await fileCount();
+  ok(M.policy.resolveCover(repo.get(shipped.id), cache.forBook(repo.get(shipped.id))).source === 'upload',
+    'the custom cover is what resolves right now');
+
+  button.click();
+  await waitFor(() => !repo.get(shipped.id).coverId, { label: 'the cover to clear' });
+
+  const cleared = repo.get(shipped.id);
+  ok(!cleared.coverId, 'the book no longer references an uploaded cover');
+  ok(await repo.getFile(mineId) === undefined, 'and the blob itself is gone, not orphaned');
+  ok(await fileCount() === filesWithMine - 1, 'storage is one file lighter',
+    `${await fileCount()} vs ${filesWithMine}`);
+
+  const back = M.policy.resolveCover(cleared, cache.forBook(cleared));
+  ok(back.source === 'openlibrary',
+    'and the shipped photograph is what resolves again, per the policy order',
+    `${back.source} / ${back.status}`);
+  ok(cleared.coverUrl && back.url === cleared.coverUrl,
+    'pointing at the original URL', back.url?.slice(0, 48));
+
+  await waitFor(() => !removeBtn(), { label: 'the action to disappear' });
+  ok(!removeBtn(), 'the remove action removes itself, having nothing left to remove');
+  const label = inDrawer('[data-cover-label]');
+  ok(/use your own cover image/i.test(label?.textContent ?? ''),
+    'and the upload control goes back to offering a first cover',
+    (label?.textContent ?? '').trim());
+  const shownImg = inDrawer('.detail__cover img.book__photo');
+  ok(Boolean(shownImg) && shownImg.getAttribute('src') === cleared.coverUrl,
+    'the drawer is already showing the fallback, with no page reload');
+
+  scenario('a failed removal keeps the cover and says so');
+
+  const doomedSrc = await makeSource(800, 1200, splitHorizontally);
+  await uploadCover(repo.get(shipped.id), new File([doomedSrc], 'again.png', { type: 'image/png' }));
+  await waitFor(() => repo.get(shipped.id)?.coverId, { label: 'the second upload' });
+  await waitFor(() => removeBtn(), { label: 'the remove action' });
+
+  const keptCoverId = repo.get(shipped.id).coverId;
+  const keptSize = (await repo.getFile(keptCoverId)).blob.size;
+  const filesBeforeFailure = await fileCount();
+
+  const realRemoveFile = repo.removeFile.bind(repo);
+  repo.removeFile = async () => { throw new Error('storage refused'); };
+
+  const failing = removeBtn();
+  failing.click();
+  await waitFor(() => toasts().some((t) => /could not be removed|storage refused/i.test(t)),
+    { label: 'the error' });
+  repo.removeFile = realRemoveFile;
+
+  const survived = repo.get(shipped.id);
+  ok(survived.coverId === keptCoverId, 'the book still points at its custom cover',
+    survived.coverId);
+  ok((await repo.getFile(keptCoverId))?.blob?.size === keptSize,
+    'whose blob is untouched', `${keptSize} bytes`);
+  ok(await fileCount() === filesBeforeFailure, 'and nothing was deleted',
+    `${await fileCount()} vs ${filesBeforeFailure}`);
+  ok(M.policy.resolveCover(survived, cache.forBook(survived)).source === 'upload',
+    'it still resolves as her upload');
+  ok(toasts().some((t) => /could not be removed|storage refused/i.test(t)),
+    'the failure was reported rather than passed off as success',
+    toasts().slice(-1)[0]);
+  await waitFor(() => removeBtn() && removeBtn().disabled === false,
+    { label: 'the button to recover' });
+  ok(removeBtn().disabled === false && /remove custom cover/i.test(removeBtn().textContent),
+    'and the button is usable again rather than stuck on "Removing…"',
+    removeBtn().textContent.trim());
+
+  scenario('upload, replace, remove, re-add: never an orphan');
+
+  const baseline = await fileCount();
+  const cycleBook = repo.all().find((b) => !b.coverId && b.id !== shipped.id);
+  const counts = [];
+
+  for (const [w, h] of [[900, 600], [600, 1500], [500, 500]]) {
+    const src = await makeSource(w, h, splitVertically);
+    const before = repo.get(cycleBook.id).coverId;
+    await uploadCover(repo.get(cycleBook.id), new File([src], `c${w}.png`, { type: 'image/png' }));
+    await waitFor(() => repo.get(cycleBook.id).coverId && repo.get(cycleBook.id).coverId !== before,
+      { label: `the ${w}x${h} upload` });
+    counts.push(await fileCount());
+  }
+  ok(counts.every((c) => c === baseline + 1),
+    'three uploads in a row leave exactly one cover file, never three',
+    counts.join(', '));
+
+  await waitFor(() => removeBtn(), { label: 'the remove action' });
+  const lastId = repo.get(cycleBook.id).coverId;
+  removeBtn().click();
+  await waitFor(() => !repo.get(cycleBook.id).coverId, { label: 'the removal' });
+  ok(await fileCount() === baseline, 'removing it returns storage to where it started',
+    `${await fileCount()} vs ${baseline}`);
+  ok(await repo.getFile(lastId) === undefined, 'with the last blob gone too');
+
+  const againSrc = await makeSource(700, 1100, splitHorizontally);
+  await uploadCover(repo.get(cycleBook.id), new File([againSrc], 'again.png', { type: 'image/png' }));
+  await waitFor(() => repo.get(cycleBook.id).coverId, { label: 'the re-upload' });
+  ok(await fileCount() === baseline + 1, 're-adding one afterwards still leaves exactly one',
+    `${await fileCount()}`);
+  const reAdded = await inspect((await repo.getFile(repo.get(cycleBook.id).coverId)).blob);
+  ok(reAdded.width === 600 && reAdded.height === 900,
+    'and it went through the same processing as any other',
+    `${reAdded.width} x ${reAdded.height}`);
+
+  scenario('an override-style custom cover is removable too');
+
+  // The other door to a custom cover: a fileId on the separate covers
+  // store rather than on the book record.
+  const overrideBook = repo.all().find((b) => !b.coverId && b.id !== shipped.id && b.id !== cycleBook.id);
+  const overrideBlob = await makeSource(600, 900, splitHorizontally);
+  const overrideFile = await repo.addFile(
+    overrideBook.id, new File([overrideBlob], 'via-override.png', { type: 'image/png' }), 'attachment',
+  );
+  repo.setCover(overrideBook.id, { fileId: overrideFile.id, source: 'upload' });
+
+  M.detail.openBookDetail(ctx, overrideBook.id);
+  await waitFor(() => inDrawer('[data-cover-input]'), { label: 'the drawer' });
+  await waitFor(() => removeBtn(), { label: 'the remove action for an override' });
+  ok(Boolean(removeBtn()), 'the action appears for an override-backed cover too');
+
+  removeBtn().click();
+  await waitFor(() => !repo.getCover(overrideBook.id), { label: 'the override to clear' });
+  ok(!repo.getCover(overrideBook.id), 'the override record is gone');
+  ok(await repo.getFile(overrideFile.id) === undefined, 'along with its blob');
+  ok(M.policy.resolveCover(repo.get(overrideBook.id), cache.forBook(repo.get(overrideBook.id))).source
+    !== 'upload', 'and the book no longer resolves as an upload');
+
+  document.querySelectorAll('#drawer-root > *, .scrim').forEach((n) => n.remove());
+
+  ok(window.__errors.length === 0, 'no console errors anywhere',
+    window.__errors.slice(0, 4).join(' | '));
+} catch (error) {
+  fails += 1;
+  say('THREW  ' + (error?.stack || error));
+}
+
+say('');
+say(fails ? `${fails} FAILURE(S) out of ${checks} checks` : `ALL PASS (${checks} checks)`);
+finish();
+</script></body></html>

@@ -327,6 +327,52 @@ scenario named "a failure partway through" failed a run in which every
 check passed. `run-async.ps1` now uses `-cmatch 'FAILURE\(S\)'` and also
 insists on seeing an `ALL PASS` line.
 
+## Covers she uploads herself
+
+```powershell
+.\tools\run-async.ps1 -Harness tools/cover-check.html
+```
+
+**cover-check.html** covers `src/utils/image.js`, which crops and
+re-encodes an uploaded cover into the canonical 600 x 900 JPEG before it
+is stored.
+
+It does not take the code's word for anything. Every processing test
+**decodes the blob that was actually produced** and measures it:
+dimensions from the decoded bitmap, format from the file's magic bytes
+(so a PNG relabelled `image/jpeg` would fail), and the crop itself from
+sampled pixels. Sources are built with red/blue halves precisely so that
+a centre crop, a mirrored crop and a stretched crop all look different
+from each other.
+
+The distortion test is the nice one: a 300 x 300 red square centred in a
+1200 x 600 landscape must still measure square afterwards, at exactly
+the size uniform scaling predicts — 450 x 450. If either axis were
+scaled independently, that would be two different numbers.
+
+One thing it deliberately does NOT assert: that the output is always
+smaller than the input. It usually is, dramatically so — a 3000 x 2000
+photograph goes 153 KB to 15 KB. But pure high-frequency noise is the
+one thing JPEG is worse at than PNG, and there the output grows. That
+case is asserted as *bounded* instead, because claiming "always smaller"
+would be claiming something untrue.
+
+It also drives **Remove custom cover** through the real drawer: that the
+action appears only when a custom cover exists, that removal clears the
+reference AND the blob, that the policy fallback is on screen
+immediately with no reload, that a failed removal keeps the cover and
+says so, and that upload/replace/remove/re-add cycles never leave a
+second cover file behind. Both routes to a custom cover are covered —
+`book.coverId` and a `fileId` on the separate covers override.
+
+A trap it produced: opening a book calls `active?.close()` on the
+previous drawer, which then sits in the DOM through its exit animation
+with its handlers still bound. A document-wide `querySelector` can
+therefore hand back the OLD drawer's controls, so an upload driven
+through them updates the library while the drawer actually on screen
+never re-renders — which looks exactly like a broken feature. Scope
+drawer queries to `#drawer-root .drawer:not(.is-closing)`.
+
 ## Opening an older library
 
 ```powershell

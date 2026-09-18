@@ -256,6 +256,25 @@
 }
 .filedrop:hover, .filedrop.is-over { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-text); }
 
+/* While an uploaded cover is being cropped and re-encoded. The pointer
+   is refused because the input behind it is disabled anyway, and a
+   dashed box that still looks clickable invites a second pick. */
+.filedrop.is-busy {
+  pointer-events: none;
+  opacity: .7;
+  border-style: solid;
+  border-color: var(--accent-line);
+  color: var(--accent-text);
+}
+
+/* The way back from a cover she chose. Deliberately quiet, and to the
+   right: replacing a cover is the common action, undoing it is not. */
+.cover-undo {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-2);
+}
+
 /* ==========================================================
    READING DNA
    ========================================================== */
