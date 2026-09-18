@@ -5,9 +5,11 @@
  *
  *   storage  →  repository  →  store  →  app
  *
- * The repository is handed an IndexedDB adapter here, and that is the
- * only line in the entire codebase that knows where the data lives.
- * Phase 2 replaces this one import.
+ * The repository is handed an adapter here, and `storage/platform.js` is
+ * the only module in the codebase that knows where the data lives: the
+ * browser gets IndexedDB exactly as it always has, and the desktop build
+ * gets a folder of real files, migrating across on its first run.
+ * Everything above this line is identical either way.
  *
  * ── THE FRONT DOOR ────────────────────────────────────────────────
  * The landing page is mounted here, before the app is shown, and it is
@@ -19,7 +21,7 @@
  */
 
 import { qs } from './utils/dom.js';
-import { createIndexedDbAdapter } from './storage/indexeddb-adapter.js';
+import { createStorage } from './storage/platform.js';
 import { createRepository } from './storage/repository.js';
 import { createStore, DEFAULT_PREFS, VIEWS } from './state/store.js';
 import { createCoverCache } from './ui/cover-urls.js';
@@ -38,7 +40,8 @@ async function boot() {
   // picture that arrived a beat later would pop in after the page had
   // settled. It is one small local JSON file and it never rejects — an
   // empty folder is a valid answer.
-  const repo = createRepository(createIndexedDbAdapter());
+  const { adapter } = await createStorage();
+  const repo = createRepository(adapter);
   const [result] = await Promise.all([
     repo.init({
       seedBooks: SEED_BOOKS,

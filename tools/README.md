@@ -408,6 +408,57 @@ Replace drops them, and the next boot puts them back, with her restored
 edits and her uploaded cover intact throughout. The catalogue is app
 data and repairs itself; only her own writing is precious.
 
+## The library as files on a disk
+
+```powershell
+.\tools\run-async.ps1 -Harness tools/fs-adapter-check.html
+```
+
+**fs-adapter-check.html** covers `src/storage/fs-adapter.js`,
+`platform.js` and `migrate.js` — the storage the desktop build will use
+instead of IndexedDB.
+
+`createFsAdapter` is handed its filesystem rather than importing one, and
+this harness hands it one it can break on purpose. The adapter, the write
+queue, the atomic-write path and every line of `migrate.js` are the real
+modules; only the *disk* is a fake, because a real disk cannot be asked
+the two questions that matter most here on demand:
+
+* **What is on disk when a write fails halfway?** The fake fails one
+  named operation, once — the temp write, or the rename that commits it —
+  and the test then reads `library.json` back and requires it to be
+  byte-identical to before, still valid JSON, with no `.tmp` left behind.
+* **What happens when two saves race?** The repository fires writes
+  without awaiting them, so thirty concurrent `put` calls are exactly
+  what it does on a busy afternoon. Without the queue each would read,
+  modify and rewrite the whole document, and the last to land would erase
+  the other twenty-nine. The fake counts overlapping writes, so
+  "serialised" is measured — peak concurrency must be 1 — rather than
+  assumed.
+
+The migration tests use a **real** IndexedDB, because migrating from a
+fake proves nothing about the database her books are actually in. They
+cover all four outcomes: a fresh install, a real library copied and
+verified, a second launch adopting what is already there, and a
+migration that died halfway being thrown away rather than trusted. The
+failure path asserts the whole safety contract at once — the incomplete
+filesystem output is deleted, the pre-migration `.ponyolib` is kept, and
+the browser database is byte-for-byte what it was.
+
+Two things worth knowing:
+
+**Verification is not a formality.** After a good migration the suite
+corrupts one cover on disk and requires the verifier to notice, then
+truncates it and requires the length check to notice. A verifier nobody
+has ever seen fail is not a verifier.
+
+**Looking for a browser library must not create one.** `indexedDB.open`
+creates the database when it is missing, so the naive check would leave
+an empty `ponyo-library` behind in the webview of every desktop install
+that never used the web version — a write, from the module that promised
+not to make any. `migrate.js` asks `indexedDB.databases()` first, and the
+suite asserts the real database is never created.
+
 ### What these suites do NOT cover
 
 **The STORE fallback in situ.** `zip.js` skips compression when

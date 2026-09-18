@@ -1,0 +1,970 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fs adapter check</title></head><body>
+<pre id="out" style="font:12px monospace;white-space:pre-wrap;padding:1rem"></pre>
+<script>
+// Console noise is a failure, same as everywhere else: an exception
+// thrown inside an await would otherwise vanish and leave a section
+// merely looking short rather than broken.
+window.__errors = [];
+window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+const realError = console.error.bind(console);
+console.error = (...args) => { window.__errors.push(args.map(String).join(' ')); realError(...args); };
+</script>
+<script type="module">
+/**
+ * fs-adapter-check.html — proving the filesystem storage layer.
+ *
+ * Run it with tools/run-async.ps1. Opening it directly in a browser
+ * works too: with no ?sink= it simply renders the report.
+ *
+ * ── WHY THERE IS A FAKE FILESYSTEM IN HERE ────────────────────────
+ * `createFsAdapter` is handed its filesystem rather than importing one,
+ * so this harness hands it one it can break on purpose. That is not a
+ * stand-in for the code under test — the adapter, the write queue, the
+ * atomic-write path and the whole of migrate.js are the real modules.
+ * It is a stand-in for the DISK, and it is the only way to ask the
+ * questions that actually matter here: what is left on disk when a
+ * write fails halfway, and what happens when two saves race.
+ *
+ * A real filesystem cannot be asked either of those on demand.
+ *
+ * The fake is deliberately hostile:
+ *   - every operation yields to the event loop, so anything that is not
+ *     explicitly serialised WILL interleave
+ *   - it counts overlapping writes, so "serialised" is measured rather
+ *     than assumed
+ *   - it can be told to fail one specific operation, once
+ *   - it keeps every byte, so a leftover .tmp is visible
+ *
+ * ── IT CANNOT TOUCH HER LIBRARY ───────────────────────────────────
+ * The migration tests need a REAL IndexedDB to migrate from, because
+ * migrating from a fake proves nothing about the database her books are
+ * actually in. Every database here is named `ponyo-fsmig-<stamp>-<n>`
+ * and deleted at the end, and the last scenario asserts that the real
+ * `ponyo-library` was neither opened nor created.
+ */
+
+import { COLLECTIONS, createMemoryAdapter } from '../src/storage/adapter.js';
+import { createIndexedDbAdapter } from '../src/storage/indexeddb-adapter.js';
+import { createFsAdapter, FS_SCHEMA, LIBRARY_FILE } from '../src/storage/fs-adapter.js';
+import { createStorage, isDesktop } from '../src/storage/platform.js';
+import { runMigration, readMigrationState, verifyMigration, MigrationError, MARKER_FILE } from '../src/storage/migrate.js';
+import { createRepository } from '../src/storage/repository.js';
+import { verifyBackup, readBackup } from '../src/storage/backup.js';
+import { makeBook } from '../src/data/models.js';
+
+const out = document.getElementById('out');
+const lines = [];
+const say = (s) => { lines.push(s); out.textContent += s + '\n'; };
+let fails = 0;
+let checks = 0;
+const ok = (cond, label, extra = '') => {
+  checks += 1;
+  if (!cond) fails += 1;
+  say(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  — ' + extra : ''}`);
+};
+const scenario = (name) => say(`\n-- ${name} --`);
+
+function finish() {
+  const report = lines.join('\n');
+  const sink = new URLSearchParams(location.search).get('sink');
+  if (!sink) return;
+  const blob = new Blob([report], { type: 'text/plain' });
+  if (!navigator.sendBeacon(sink, blob)) {
+    fetch(sink, { method: 'POST', mode: 'no-cors', body: report, keepalive: true }).catch(() => {});
+  }
+}
+
+/* ─────────────────────────────── helpers ────────────────────────── */
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+function sameBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Deterministic, distinctive bytes so a mix-up between files is visible. */
+function pattern(seed, size) {
+  const b = new Uint8Array(size);
+  for (let i = 0; i < size; i += 1) b[i] = (i * 31 + seed * 97) & 0xFF;
+  return b;
+}
+
+async function rejects(fn) {
+  try {
+    await fn();
+    return { threw: false, name: '', message: '' };
+  } catch (error) {
+    return { threw: true, name: error?.name ?? '', message: error?.message ?? String(error) };
+  }
+}
+
+/* ───────────────────────── the fake filesystem ──────────────────── */
+
+/**
+ * Everything is a Uint8Array in a Map keyed by path. Directories are a
+ * separate set, because "does this folder exist" is a question the
+ * adapter asks and a Map of files cannot answer.
+ */
+function makeFakeFs() {
+  const files = new Map();
+  const dirs = new Set(['.', '']);
+  const ops = [];
+  let writesInFlight = 0;
+  let maxWritesInFlight = 0;
+  /** @type {null|{op: string, path?: string, contains?: string}} */
+  let fault = null;
+
+  const parentsOf = (path) => {
+    const parts = path.split('/');
+    parts.pop();
+    const out = [];
+    for (let i = 1; i <= parts.length; i += 1) out.push(parts.slice(0, i).join('/'));
+    return out;
+  };
+
+  function maybeFail(op, path) {
+    if (!fault) return;
+    if (fault.op !== op) return;
+    if (fault.path && fault.path !== path) return;
+    if (fault.contains && !path.includes(fault.contains)) return;
+    fault = null; // one-shot
+    throw new Error(`fake filesystem: ${op} failed on ${path}`);
+  }
+
+  const api = {
+    async mkdir(path) {
+      await tick();
+      ops.push(['mkdir', path]);
+      for (const p of parentsOf(path + '/x')) dirs.add(p);
+      dirs.add(path);
+    },
+    async exists(path) {
+      await tick();
+      return files.has(path) || dirs.has(path);
+    },
+    async readTextFile(path) {
+      await tick();
+      ops.push(['readTextFile', path]);
+      if (!files.has(path)) throw new Error(`fake filesystem: no such file ${path}`);
+      return dec.decode(files.get(path));
+    },
+    async writeTextFile(path, text) {
+      return api.writeFile(path, enc.encode(text));
+    },
+    async readFile(path) {
+      await tick();
+      ops.push(['readFile', path]);
+      if (!files.has(path)) throw new Error(`fake filesystem: no such file ${path}`);
+      return files.get(path).slice();
+    },
+    async writeFile(path, bytes) {
+      writesInFlight += 1;
+      maxWritesInFlight = Math.max(maxWritesInFlight, writesInFlight);
+      try {
+        await tick();
+        ops.push(['writeFile', path]);
+        maybeFail('writeFile', path);
+        files.set(path, bytes.slice());
+        for (const p of parentsOf(path)) dirs.add(p);
+      } finally {
+        writesInFlight -= 1;
+      }
+    },
+    async rename(from, to) {
+      await tick();
+      ops.push(['rename', from, to]);
+      maybeFail('rename', from);
+      if (!files.has(from)) throw new Error(`fake filesystem: no such file ${from}`);
+      files.set(to, files.get(from));
+      files.delete(from);
+    },
+    async remove(path) {
+      await tick();
+      ops.push(['remove', path]);
+      maybeFail('remove', path);
+      if (!files.has(path) && !dirs.has(path)) throw new Error(`fake filesystem: no such file ${path}`);
+      files.delete(path);
+      dirs.delete(path);
+    },
+    async readDir(path) {
+      await tick();
+      const prefix = path ? path + '/' : '';
+      const names = new Set();
+      for (const key of files.keys()) {
+        if (!key.startsWith(prefix)) continue;
+        const rest = key.slice(prefix.length);
+        if (!rest.includes('/')) names.add(rest);
+      }
+      return Array.from(names);
+    },
+
+    /* ── test-only instrumentation ── */
+    _files: files,
+    _ops: ops,
+    _text: (path) => (files.has(path) ? dec.decode(files.get(path)) : null),
+    _put: (path, text) => files.set(path, enc.encode(text)),
+    _paths: () => Array.from(files.keys()),
+    _temps: () => Array.from(files.keys()).filter((p) => p.endsWith('.tmp')),
+    _fail: (op, opts = {}) => { fault = { op, ...opts }; },
+    _maxWritesInFlight: () => maxWritesInFlight,
+    _resetWatermark: () => { maxWritesInFlight = 0; },
+  };
+  return api;
+}
+
+/* ───────────────────────── realistic fixtures ───────────────────── */
+
+function sampleBooks(n = 6) {
+  const genres = ['Horror', 'Romance', 'Psychology', "Children's", 'Mystery', 'Economics'];
+  return Array.from({ length: n }, (_, i) => makeBook({
+    title: `Test Book ${i + 1}`,
+    author: `Author ${String.fromCharCode(65 + i)}`,
+    genre: genres[i % genres.length],
+    description: `A book for the filesystem tests, number ${i + 1}.`,
+  }));
+}
+
+function fileRecord({ id, bookId, seed, size, type, name, role = 'attachment' }) {
+  const bytes = pattern(seed, size);
+  return {
+    id,
+    bookId,
+    name,
+    type,
+    size: bytes.byteLength,
+    role,
+    blob: new Blob([bytes], { type }),
+    addedAt: '2026-01-02T03:04:05.000Z',
+  };
+}
+
+/** A library with real edits, an uploaded cover, a PDF and an override. */
+async function seedSource(adapter) {
+  const books = sampleBooks(6);
+  books[0] = { ...books[0], status: 'read', rating: 5, notes: ['A note she wrote.'], tags: ['favourite'] };
+  books[1] = { ...books[1], status: 'reading', progress: 42 };
+
+  const cover = fileRecord({
+    id: 'fl_cover_1', bookId: books[0].id, seed: 7, size: 2048,
+    type: 'image/jpeg', name: 'cover.jpg', role: 'cover',
+  });
+  const pdf = fileRecord({
+    id: 'fl_pdf_1', bookId: books[2].id, seed: 19, size: 5000,
+    type: 'application/pdf', name: 'reading-copy.pdf',
+  });
+  const photo = fileRecord({
+    id: 'fl_photo_1', bookId: books[3].id, seed: 31, size: 900,
+    type: 'image/png', name: 'memory.png',
+  });
+
+  books[0] = { ...books[0], coverId: cover.id };
+
+  await adapter.putMany(COLLECTIONS.BOOKS, books);
+  await adapter.put(COLLECTIONS.SETTINGS, { key: 'seed:version', value: '3' });
+  await adapter.put(COLLECTIONS.SETTINGS, { key: 'theme', value: 'ember' });
+  await adapter.put(COLLECTIONS.SETTINGS, { key: 'animations', value: false });
+  await adapter.put(COLLECTIONS.COVERS, {
+    id: books[4].id, url: 'https://example.com/manual.jpg', fileId: '',
+    source: 'manual', updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  for (const record of [cover, pdf, photo]) await adapter.putBlob(record);
+
+  return { books, files: [cover, pdf, photo] };
+}
+
+/* ─────────────────────── IndexedDB bookkeeping ──────────────────── */
+
+const stamp = Date.now().toString(36);
+let dbSeq = 0;
+const createdDbs = [];
+function testDbName() {
+  dbSeq += 1;
+  const name = `ponyo-fsmig-${stamp}-${dbSeq}`;
+  createdDbs.push(name);
+  return name;
+}
+const deleteDb = (name) => new Promise((resolve) => {
+  const req = indexedDB.deleteDatabase(name);
+  req.onsuccess = req.onerror = req.onblocked = () => resolve();
+});
+
+/* ════════════════════════════ the suites ════════════════════════ */
+
+async function contractSuite() {
+  scenario('the adapter implements the contract');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  const required = [
+    'open', 'list', 'get', 'put', 'putMany', 'remove', 'clear',
+    'putBlob', 'getBlob', 'removeBlob', 'listBlobsByBook', 'listAllBlobs', 'clearBlobs',
+  ];
+  const missing = required.filter((m) => typeof adapter[m] !== 'function');
+  ok(missing.length === 0, 'all thirteen contract methods exist', `${required.length} methods`);
+  ok(adapter.name === 'filesystem', 'it names itself', adapter.name);
+
+  const memory = createMemoryAdapter();
+  const extra = required.filter((m) => typeof memory[m] !== 'function');
+  ok(extra.length === 0, 'and the memory adapter agrees on the same set');
+
+  await adapter.open();
+  ok(fs._text('lib/library.json') !== null, 'opening a fresh library writes library.json');
+  const doc = JSON.parse(fs._text('lib/library.json'));
+  ok(doc.schema === FS_SCHEMA, 'stamped with the schema version', String(doc.schema));
+  ok(Array.isArray(doc.books) && doc.books.length === 0, 'and it starts empty');
+  ok(await fs.exists('lib/files'), 'the files folder is created up front');
+}
+
+async function collectionsSuite() {
+  scenario('books, settings and covers round-trip');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  await adapter.open();
+
+  const books = sampleBooks(4);
+  await adapter.putMany(COLLECTIONS.BOOKS, books);
+  ok((await adapter.list(COLLECTIONS.BOOKS)).length === 4, 'putMany stored every book');
+
+  const one = await adapter.get(COLLECTIONS.BOOKS, books[1].id);
+  ok(JSON.stringify(one) === JSON.stringify(books[1]), 'get returns the record unchanged', one?.title);
+
+  const edited = { ...books[1], rating: 4, status: 'read' };
+  await adapter.put(COLLECTIONS.BOOKS, edited);
+  ok((await adapter.get(COLLECTIONS.BOOKS, books[1].id)).rating === 4, 'put overwrites in place');
+  ok((await adapter.list(COLLECTIONS.BOOKS)).length === 4, 'and does not add a duplicate');
+
+  await adapter.remove(COLLECTIONS.BOOKS, books[0].id);
+  ok((await adapter.list(COLLECTIONS.BOOKS)).length === 3, 'remove drops one book');
+  ok((await adapter.get(COLLECTIONS.BOOKS, books[0].id)) === undefined, 'and it is gone');
+
+  await adapter.put(COLLECTIONS.SETTINGS, { key: 'theme', value: 'ember' });
+  await adapter.put(COLLECTIONS.SETTINGS, { key: 'animations', value: false });
+  const settings = await adapter.list(COLLECTIONS.SETTINGS);
+  ok(settings.length === 2, 'settings are keyed by key, not id', String(settings.length));
+  ok((await adapter.get(COLLECTIONS.SETTINGS, 'animations')).value === false,
+    'a false setting survives as false, not as missing');
+
+  await adapter.put(COLLECTIONS.COVERS, { id: books[2].id, url: 'https://example.com/a.jpg', source: 'manual' });
+  ok((await adapter.list(COLLECTIONS.COVERS)).length === 1, 'covers are their own collection');
+
+  await adapter.clear(COLLECTIONS.BOOKS);
+  ok((await adapter.list(COLLECTIONS.BOOKS)).length === 0, 'clear empties books');
+  ok((await adapter.list(COLLECTIONS.SETTINGS)).length === 2, 'and leaves settings alone');
+  ok((await adapter.list(COLLECTIONS.COVERS)).length === 1, 'and covers alone');
+
+  const bad = await rejects(() => adapter.list('nonsense'));
+  ok(bad.threw, 'an unknown collection is refused rather than silently empty');
+}
+
+async function blobSuite() {
+  scenario('blobs keep their bytes and their type');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  await adapter.open();
+
+  const cover = fileRecord({
+    id: 'fl_a', bookId: 'bk_1', seed: 3, size: 4096,
+    type: 'image/jpeg', name: 'cover.jpg', role: 'cover',
+  });
+  const pdf = fileRecord({
+    id: 'fl_b', bookId: 'bk_1', seed: 11, size: 1234,
+    type: 'application/pdf', name: 'copy.pdf',
+  });
+  const other = fileRecord({
+    id: 'fl_c', bookId: 'bk_2', seed: 5, size: 64,
+    type: 'image/png', name: 'photo.png',
+  });
+
+  const sourceBytes = await bytesOf(cover.blob);
+  for (const record of [cover, pdf, other]) await adapter.putBlob(record);
+
+  const back = await adapter.getBlob('fl_a');
+  ok(Boolean(back), 'a stored blob comes back');
+  ok(back.blob instanceof Blob, 'as a real Blob, not a path or an array');
+  ok(back.blob.type === 'image/jpeg', 'with the original MIME type', back.blob.type);
+  ok(sameBytes(await bytesOf(back.blob), sourceBytes),
+    'byte for byte identical', `${sourceBytes.length} bytes`);
+  ok(back.name === 'cover.jpg' && back.role === 'cover' && back.bookId === 'bk_1',
+    'and the metadata came with it');
+  ok(back.addedAt === '2026-01-02T03:04:05.000Z', 'including when it was added');
+
+  ok(fs._files.has('lib/files/fl_a.jpg'), 'the bytes are a real file with a sensible extension');
+  ok(fs._files.has('lib/files/fl_b.pdf'), 'a PDF gets .pdf');
+  ok(fs._files.has('lib/files/fl_c.png'), 'a PNG gets .png');
+  ok(!fs._text('lib/library.json').includes('"blob"'),
+    'and the bytes are NOT inlined into library.json');
+
+  const byBook = await adapter.listBlobsByBook('bk_1');
+  ok(byBook.length === 2, 'listBlobsByBook finds both of one book\'s files', String(byBook.length));
+  ok(byBook.every((r) => r.blob instanceof Blob), 'each carrying live bytes');
+
+  const all = await adapter.listAllBlobs();
+  ok(all.length === 3, 'listAllBlobs sees everything', String(all.length));
+  const pdfBack = all.find((r) => r.id === 'fl_b');
+  ok(sameBytes(await bytesOf(pdfBack.blob), await bytesOf(pdf.blob)), 'a second file is also intact');
+
+  ok((await adapter.getBlob('fl_missing')) === undefined, 'an unknown id is undefined, not a throw');
+
+  await adapter.removeBlob('fl_b');
+  ok((await adapter.getBlob('fl_b')) === undefined, 'a removed blob is gone');
+  ok(!fs._files.has('lib/files/fl_b.pdf'), 'and its file was deleted from disk');
+  ok((await adapter.listAllBlobs()).length === 2, 'leaving the others');
+
+  await adapter.clearBlobs();
+  ok((await adapter.listAllBlobs()).length === 0, 'clearBlobs empties the store');
+  ok(fs._paths().filter((p) => p.startsWith('lib/files/')).length === 0,
+    'and removes every file, not just the records');
+
+  // A cover whose bytes vanished underneath us must not take the app
+  // down mid-render; the drawn cover is the right answer instead.
+  await adapter.putBlob(other);
+  await fs.remove('lib/files/fl_c.png');
+  ok((await adapter.getBlob('fl_c')) === undefined, 'metadata without bytes reads as absent');
+}
+
+async function persistenceSuite() {
+  scenario('it is still there when you open it again');
+  const fs = makeFakeFs();
+  const first = createFsAdapter({ fs, root: 'lib' });
+  await first.open();
+  const books = sampleBooks(3);
+  await first.putMany(COLLECTIONS.BOOKS, books);
+  await first.put(COLLECTIONS.SETTINGS, { key: 'theme', value: 'noir' });
+  await first.putBlob(fileRecord({
+    id: 'fl_keep', bookId: books[0].id, seed: 2, size: 700,
+    type: 'image/jpeg', name: 'k.jpg', role: 'cover',
+  }));
+  await first.flush();
+  first.close();
+
+  const second = createFsAdapter({ fs, root: 'lib' });
+  await second.open();
+  ok((await second.list(COLLECTIONS.BOOKS)).length === 3, 'the books came back');
+  ok((await second.get(COLLECTIONS.SETTINGS, 'theme')).value === 'noir', 'and the settings');
+  const blob = await second.getBlob('fl_keep');
+  ok(Boolean(blob) && blob.blob.size === 700, 'and the uploaded file', `${blob?.blob?.size} bytes`);
+  ok(blob.blob.type === 'image/jpeg', 'with its type intact');
+
+  scenario('closing is not erasing');
+  {
+    // A write queued but not yet run must not be able to serialise an
+    // emptied adapter over the top of a real library.
+    const fs = makeFakeFs();
+    const adapter = createFsAdapter({ fs, root: 'lib' });
+    await adapter.open();
+    await adapter.putMany(COLLECTIONS.BOOKS, sampleBooks(4));
+    await adapter.flush();
+
+    const pending = adapter.put(COLLECTIONS.BOOKS, makeBook({
+      title: 'In Flight', author: 'Her', genre: 'Poetry',
+    }));
+    adapter.close();          // deliberately WITHOUT awaiting first
+    await pending;
+
+    const doc = JSON.parse(fs._text('lib/library.json'));
+    ok(doc.books.length === 5, 'the queued write still landed on a full library', String(doc.books.length));
+    ok(doc.books.some((b) => b.title === 'In Flight'), 'including the book itself');
+    ok(doc.books.length !== 0, 'closing mid-write did not blank the file');
+  }
+
+  scenario('a damaged library.json is refused, never overwritten');
+  const broken = makeFakeFs();
+  broken._put('lib/library.json', '{ "books": [ {');
+  const adapter = createFsAdapter({ fs: broken, root: 'lib' });
+  const verdict = await rejects(() => adapter.open());
+  ok(verdict.threw, 'opening it throws');
+  ok(verdict.name === 'StorageUnavailableError', 'as a storage error the repository knows', verdict.name);
+  ok(broken._text('lib/library.json') === '{ "books": [ {',
+    'and the damaged file is still on disk, byte for byte');
+
+  const notALibrary = makeFakeFs();
+  notALibrary._put('lib/library.json', '{"hello":"world"}');
+  const other = createFsAdapter({ fs: notALibrary, root: 'lib' });
+  ok((await rejects(() => other.open())).threw, 'valid JSON that is not a library is refused too');
+}
+
+async function serialisationSuite() {
+  scenario('concurrent writes are serialised, not raced');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  await adapter.open();
+  fs._resetWatermark();
+
+  // Exactly how the repository writes: fire and do not await. Without a
+  // queue each of these reads the document, adds one book and writes the
+  // whole thing back, and the last one to land erases the other 29.
+  const books = sampleBooks(6);
+  const many = Array.from({ length: 30 }, (_, i) => makeBook({
+    title: `Racer ${i}`, author: `Author ${i}`, genre: 'Mystery',
+  }));
+  const pending = many.map((book) => adapter.put(COLLECTIONS.BOOKS, book));
+  ok(pending.every((p) => p instanceof Promise), 'writes are promises the caller need not await');
+  await Promise.all(pending);
+  await adapter.flush();
+
+  const stored = await adapter.list(COLLECTIONS.BOOKS);
+  ok(stored.length === 30, 'every one of thirty concurrent writes survived', String(stored.length));
+  const onDisk = JSON.parse(fs._text('lib/library.json'));
+  ok(onDisk.books.length === 30, 'and all thirty are in the file on disk', String(onDisk.books.length));
+  const titles = new Set(onDisk.books.map((b) => b.title));
+  ok(many.every((b) => titles.has(b.title)), 'not one of them was lost to an overwrite');
+  ok(fs._maxWritesInFlight() === 1,
+    'no two writes were ever in flight at once', `peak ${fs._maxWritesInFlight()}`);
+
+  // Blobs and documents share the same queue.
+  fs._resetWatermark();
+  const blobs = Array.from({ length: 8 }, (_, i) => fileRecord({
+    id: `fl_race_${i}`, bookId: books[0].id, seed: i + 40, size: 256 + i,
+    type: 'image/png', name: `r${i}.png`,
+  }));
+  await Promise.all(blobs.map((b) => adapter.putBlob(b)));
+  await adapter.flush();
+  ok((await adapter.listAllBlobs()).length === 8, 'eight concurrent uploads all landed');
+  ok(fs._maxWritesInFlight() === 1, 'blob writes are serialised with document writes too',
+    `peak ${fs._maxWritesInFlight()}`);
+  const doc = JSON.parse(fs._text('lib/library.json'));
+  ok(doc.files.length === 8, 'and the metadata for all eight is in library.json');
+
+  for (let i = 0; i < 8; i += 1) {
+    const back = await adapter.getBlob(`fl_race_${i}`);
+    if (!sameBytes(await bytesOf(back.blob), pattern(i + 40, 256 + i))) {
+      ok(false, `concurrent upload ${i} kept its own bytes`);
+      return;
+    }
+  }
+  ok(true, 'and every one kept its own bytes rather than a neighbour\'s');
+}
+
+async function atomicitySuite() {
+  scenario('a failed write never leaves a partial library.json');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  await adapter.open();
+  const books = sampleBooks(5);
+  await adapter.putMany(COLLECTIONS.BOOKS, books);
+  await adapter.flush();
+
+  const before = fs._text('lib/library.json');
+  ok(JSON.parse(before).books.length === 5, 'five books are safely on disk');
+
+  // Fail the temp-file write itself.
+  fs._fail('writeFile', { contains: 'library.json' });
+  const failed = await rejects(() => adapter.put(COLLECTIONS.BOOKS, makeBook({
+    title: 'Never Saved', author: 'Nobody', genre: 'Horror',
+  })));
+  ok(failed.threw, 'the write reports its failure rather than swallowing it', failed.message.slice(0, 44));
+  const after = fs._text('lib/library.json');
+  ok(after === before, 'library.json on disk is byte-identical to before the failure');
+  ok(JSON.parse(after).books.length === 5, 'still exactly five books, still valid JSON');
+  ok(fs._temps().length === 0, 'and no temp file was left behind', String(fs._temps().length));
+
+  // Fail the rename instead — bytes written, commit refused.
+  fs._fail('rename', { contains: 'library.json' });
+  const failedRename = await rejects(() => adapter.put(COLLECTIONS.BOOKS, makeBook({
+    title: 'Also Never Saved', author: 'Nobody', genre: 'Horror',
+  })));
+  ok(failedRename.threw, 'a failed rename is a failed write');
+  ok(fs._text('lib/library.json') === before, 'the library is still the old one, intact');
+  ok(fs._temps().length === 0, 'the temp file was cleaned up');
+
+  scenario('and the queue survives a failure');
+  const recovered = await rejects(() => adapter.put(COLLECTIONS.BOOKS, makeBook({
+    title: 'Saved After All', author: 'Someone', genre: 'Romance',
+  })));
+  ok(!recovered.threw, 'the next write succeeds instead of inheriting the rejection');
+  const now = JSON.parse(fs._text('lib/library.json'));
+  const titles = now.books.map((b) => b.title);
+  ok(titles.includes('Saved After All'), 'the new book is on disk');
+  ok(titles.includes('Never Saved') && titles.includes('Also Never Saved'),
+    'and the two that failed earlier were carried in by it, rather than lost forever');
+  ok(now.books.length === 8, 'eight books in total', String(now.books.length));
+
+  scenario('a failed blob write does not create a phantom record');
+  const fs2 = makeFakeFs();
+  const a2 = createFsAdapter({ fs: fs2, root: 'lib' });
+  await a2.open();
+  fs2._fail('writeFile', { contains: 'files/' });
+  const blobFail = await rejects(() => a2.putBlob(fileRecord({
+    id: 'fl_ghost', bookId: 'bk_1', seed: 9, size: 128, type: 'image/png', name: 'g.png',
+  })));
+  ok(blobFail.threw, 'the upload fails loudly');
+  ok((await a2.getBlob('fl_ghost')) === undefined, 'and no metadata claims a file that is not there');
+  ok(!JSON.parse(fs2._text('lib/library.json')).files.some((f) => f.id === 'fl_ghost'),
+    'library.json has no record of it either');
+  ok(fs2._temps().length === 0, 'no temp bytes left behind');
+}
+
+async function migrationSuite() {
+  scenario('first launch with an empty browser database');
+  {
+    const fs = makeFakeFs();
+    const source = createIndexedDbAdapter({ database: testDbName() });
+    await source.open();
+    const result = await runMigration({ fs, root: 'lib', source, date: new Date('2026-03-01T10:00:00Z') });
+    ok(result.mode === 'fresh', 'it creates a new library rather than migrating', result.mode);
+    ok(fs._text('lib/library.json') !== null, 'library.json exists');
+    ok(JSON.parse(fs._text('lib/library.json')).books.length === 0, 'and is empty, ready to be seeded');
+    ok(JSON.parse(fs._text(`lib/${MARKER_FILE}`)).status === 'complete', 'the marker says complete');
+    ok(fs._paths().every((p) => !p.includes('.ponyolib')), 'no backup was written, because there was nothing to back up');
+    source.close();
+  }
+
+  scenario('a real browser library is migrated and verified');
+  let migratedFs = null;
+  let sourceCounts = null;
+  {
+    const fs = makeFakeFs();
+    const dbName = testDbName();
+    const source = createIndexedDbAdapter({ database: dbName });
+    await source.open();
+    const { books, files } = await seedSource(source);
+    sourceCounts = { books: books.length, files: files.length };
+
+    const before = {
+      books: (await source.list(COLLECTIONS.BOOKS)).length,
+      settings: (await source.list(COLLECTIONS.SETTINGS)).length,
+      covers: (await source.list(COLLECTIONS.COVERS)).length,
+      files: (await source.listAllBlobs()).length,
+    };
+
+    const steps = [];
+    const result = await runMigration({
+      fs, root: 'lib', source,
+      date: new Date('2026-03-02T11:00:00Z'),
+      onProgress: (name) => steps.push(name),
+    });
+
+    ok(result.mode === 'migrated', 'it reports a migration', result.mode);
+    ok(result.counts.books === 6, 'six books arrived', String(result.counts.books));
+    ok(result.counts.files === 3, 'three uploaded files arrived', String(result.counts.files));
+    ok(result.counts.covers === 1, 'and the cover override');
+    ok(result.counts.settings === 3, 'and every setting', String(result.counts.settings));
+    ok(steps.includes('backup') && steps.includes('verifying') && steps.includes('done'),
+      'it backed up, then verified, then finished', steps.join(' > '));
+
+    // the safety copy
+    const backupPath = result.backup;
+    ok(Boolean(backupPath) && backupPath.includes('pre-migration'), 'a pre-migration archive was written', backupPath);
+    ok(backupPath.endsWith('.ponyolib'), 'as a .ponyolib');
+    const archive = new Blob([fs._files.get(backupPath)], { type: 'application/zip' });
+    const verified = await rejects(() => verifyBackup(archive));
+    ok(!verified.threw, 'and the real backup verifier accepts it', verified.message.slice(0, 40));
+    const payload = await readBackup(archive);
+    ok(payload.books.length === 6, 'the archive holds all six books', String(payload.books.length));
+    ok(payload.files.length === 3, 'and all three files', String(payload.files.length));
+
+    // the source is untouched
+    const after = {
+      books: (await source.list(COLLECTIONS.BOOKS)).length,
+      settings: (await source.list(COLLECTIONS.SETTINGS)).length,
+      covers: (await source.list(COLLECTIONS.COVERS)).length,
+      files: (await source.listAllBlobs()).length,
+    };
+    ok(JSON.stringify(before) === JSON.stringify(after),
+      'the browser database was not changed in any way', JSON.stringify(after));
+    ok((await source.list(COLLECTIONS.BOOKS)).length === 6, 'IndexedDB still holds her library');
+
+    // and the destination really holds it
+    const check = createFsAdapter({ fs, root: 'lib' });
+    await check.open();
+    const landed = await check.list(COLLECTIONS.BOOKS);
+    ok(landed.length === 6, 'the filesystem library holds six books');
+    const read = landed.find((b) => b.status === 'read');
+    ok(read?.rating === 5 && read.notes?.[0] === 'A note she wrote.',
+      'with her rating and her note intact');
+    const cover = await check.getBlob('fl_cover_1');
+    ok(sameBytes(await bytesOf(cover.blob), pattern(7, 2048)), 'and her uploaded cover, byte for byte');
+    ok(cover.blob.type === 'image/jpeg', 'with its type');
+    const pdf = await check.getBlob('fl_pdf_1');
+    ok(pdf.blob.size === 5000 && pdf.blob.type === 'application/pdf', 'and the PDF', `${pdf.blob.size} bytes`);
+    check.close();
+
+    migratedFs = fs;
+    source.close();
+  }
+
+  scenario('a second launch adopts what is already there');
+  {
+    const fs = migratedFs;
+    const textBefore = fs._text('lib/library.json');
+    const state = await readMigrationState(fs, 'lib');
+    ok(state.status === 'complete', 'the marker is read as complete', state.status);
+
+    const source = createIndexedDbAdapter({ database: testDbName() });
+    await source.open();
+    const result = await runMigration({ fs, root: 'lib', source, date: new Date('2026-03-03T12:00:00Z') });
+    ok(result.mode === 'adopted', 'nothing is migrated a second time', result.mode);
+    ok(fs._text('lib/library.json') === textBefore, 'and library.json was not rewritten');
+    ok(fs._paths().filter((p) => p.includes('pre-migration')).length === 1,
+      'no second backup was written');
+    source.close();
+  }
+
+  scenario('a library that exists without a marker is adopted, not destroyed');
+  {
+    const fs = makeFakeFs();
+    const adapter = createFsAdapter({ fs, root: 'lib' });
+    await adapter.open();
+    await adapter.putMany(COLLECTIONS.BOOKS, sampleBooks(2));
+    await adapter.flush();
+    adapter.close();
+    ok(fs._text(`lib/${MARKER_FILE}`) === null, 'there is no marker file');
+
+    const state = await readMigrationState(fs, 'lib');
+    ok(state.status === 'complete', 'an existing library.json counts as finished', state.status);
+    const result = await runMigration({ fs, root: 'lib', date: new Date('2026-03-04T00:00:00Z') });
+    ok(result.mode === 'adopted', 'so it is adopted');
+    ok(JSON.parse(fs._text('lib/library.json')).books.length === 2, 'and its two books are still there');
+  }
+
+  scenario('a migration that died halfway is thrown away and redone');
+  {
+    const fs = makeFakeFs();
+    const dbName = testDbName();
+    const source = createIndexedDbAdapter({ database: dbName });
+    await source.open();
+    await seedSource(source);
+
+    // Exactly what a crash leaves behind: a marker still saying running,
+    // and a library.json holding only part of the library.
+    const partial = createFsAdapter({ fs, root: 'lib' });
+    await partial.open();
+    await partial.putMany(COLLECTIONS.BOOKS, sampleBooks(2));
+    await partial.flush();
+    partial.close();
+    fs._put(`lib/${MARKER_FILE}`, JSON.stringify({ status: 'running', startedAt: 'earlier' }));
+
+    const state = await readMigrationState(fs, 'lib');
+    ok(state.status === 'incomplete', 'the unfinished marker is recognised', state.status);
+
+    const result = await runMigration({
+      fs, root: 'lib', state, source, date: new Date('2026-03-05T09:00:00Z'),
+    });
+    ok(result.mode === 'migrated', 'the migration runs again from the start', result.mode);
+    ok(result.counts.books === 6, 'and this time all six books arrive', String(result.counts.books));
+    const doc = JSON.parse(fs._text('lib/library.json'));
+    ok(doc.books.length === 6, 'the half-written library was replaced, not appended to', String(doc.books.length));
+    ok(!doc.books.some((b) => b.title === 'Test Book 1' && b.rating === undefined && !b.id.startsWith('bk')),
+      'no orphan records from the dead attempt');
+    ok(JSON.parse(fs._text(`lib/${MARKER_FILE}`)).status === 'complete', 'and the marker is complete now');
+    source.close();
+  }
+
+  scenario('a migration that cannot be verified takes nothing with it');
+  {
+    const fs = makeFakeFs();
+    const dbName = testDbName();
+    const source = createIndexedDbAdapter({ database: dbName });
+    await source.open();
+    await seedSource(source);
+    const before = (await source.list(COLLECTIONS.BOOKS)).length;
+
+    // Break the write of the last blob. Everything before it succeeds,
+    // so this is the realistic shape of a disk filling up partway.
+    fs._fail('writeFile', { contains: 'fl_photo_1' });
+
+    const failure = await rejects(() => runMigration({
+      fs, root: 'lib', source, date: new Date('2026-03-06T09:00:00Z'),
+    }));
+    ok(failure.threw, 'the migration fails rather than half-succeeding');
+    ok(failure.name === 'MigrationError', 'as a MigrationError the app can show', failure.name);
+
+    ok(fs._text('lib/library.json') === null, 'the incomplete library.json was removed');
+    ok(fs._text(`lib/${MARKER_FILE}`) === null, 'and so was the marker, so the next launch starts clean');
+    ok(fs._paths().filter((p) => p.startsWith('lib/files/')).length === 0,
+      'and every file it had written');
+    ok(fs._temps().length === 0, 'with no temp files left');
+
+    ok(fs._paths().some((p) => p.includes('pre-migration')),
+      'but the safety copy is KEPT, because it is the one thing worth having');
+
+    ok((await source.list(COLLECTIONS.BOOKS)).length === before,
+      'and the browser database is exactly as it was', String(before));
+    const stillThere = await source.getBlob('fl_cover_1');
+    ok(sameBytes(await bytesOf(stillThere.blob), pattern(7, 2048)),
+      'her uploaded cover included');
+
+    const state = await readMigrationState(fs, 'lib');
+    ok(state.status === 'absent', 'the next launch sees no library at all', state.status);
+    source.close();
+  }
+
+  scenario('a browser library that will not open is refused, not assumed empty');
+  {
+    // `openDatabase` gives up after four seconds of silence, so a busy
+    // browser or a second window holding the database arrives here as a
+    // failure. Calling that "nothing to migrate" would create an empty
+    // library, mark it complete, and orphan her real one forever.
+    const fs = makeFakeFs();
+    const stubborn = {
+      name: 'indexeddb',
+      database: 'ponyo-library',
+      async open() { throw new Error('IndexedDB did not respond.'); },
+      async list() { throw new Error('IndexedDB did not respond.'); },
+      async listAllBlobs() { throw new Error('IndexedDB did not respond.'); },
+      close() {},
+    };
+
+    const failure = await rejects(() => runMigration({
+      fs, root: 'lib', source: stubborn, date: new Date('2026-03-08T09:00:00Z'),
+    }));
+    ok(failure.threw, 'the migration refuses to guess');
+    ok(failure.name === 'MigrationError', 'and says so as a MigrationError', failure.name);
+    ok(fs._text('lib/library.json') === null,
+      'no empty library was created in its place');
+    ok(fs._text(`lib/${MARKER_FILE}`) === null,
+      'and nothing was marked complete');
+    const state = await readMigrationState(fs, 'lib');
+    ok(state.status === 'absent', 'so the next launch tries again from the start', state.status);
+  }
+
+  scenario('verification actually looks at the bytes');
+  {
+    // Prove the verifier is not a formality: corrupt one file after a
+    // good migration and check it notices.
+    const fs = makeFakeFs();
+    const source = createIndexedDbAdapter({ database: testDbName() });
+    await source.open();
+    await seedSource(source);
+    await runMigration({ fs, root: 'lib', source, date: new Date('2026-03-07T09:00:00Z') });
+
+    const snapshot = {
+      books: await source.list(COLLECTIONS.BOOKS),
+      settings: Object.fromEntries((await source.list(COLLECTIONS.SETTINGS)).map((r) => [r.key, r.value])),
+      covers: await source.list(COLLECTIONS.COVERS),
+      files: await source.listAllBlobs(),
+    };
+    const clean = await verifyMigration(fs, 'lib', snapshot);
+    ok(clean.ok, 'a good migration verifies clean', clean.problems[0] ?? '');
+
+    fs._files.set('lib/files/fl_cover_1.jpg', pattern(99, 2048));
+    const dirty = await verifyMigration(fs, 'lib', snapshot);
+    ok(!dirty.ok, 'flipping the bytes of one cover is caught');
+    ok(dirty.problems.some((p) => p.includes('bytes changed')), 'and named for what it is', dirty.problems[0]);
+
+    fs._files.set('lib/files/fl_cover_1.jpg', pattern(7, 1024));
+    const short = await verifyMigration(fs, 'lib', snapshot);
+    ok(short.problems.some((p) => p.includes('bytes, expected')), 'a truncated file is caught by length',
+      short.problems.find((p) => p.includes('expected')) ?? '');
+    source.close();
+  }
+}
+
+async function platformSuite() {
+  scenario('the browser path is untouched');
+  ok(isDesktop() === false, 'a browser is not detected as desktop');
+  const browser = await createStorage({ desktop: false });
+  ok(browser.mode === 'indexeddb', 'so storage resolves to IndexedDB', browser.mode);
+  ok(browser.adapter.name === 'indexeddb', 'the real IndexedDB adapter, unchanged', browser.adapter.name);
+  ok(browser.migration === null, 'and no migration is attempted');
+  ok(browser.adapter.database === 'ponyo-library',
+    'pointed at her actual library database', browser.adapter.database);
+
+  scenario('the desktop path resolves to the filesystem');
+  const fs = makeFakeFs();
+  const desktop = await createStorage({ desktop: true, fs, root: 'lib' });
+  ok(desktop.mode === 'filesystem', 'storage resolves to the filesystem', desktop.mode);
+  ok(desktop.adapter.name === 'filesystem', 'with the filesystem adapter', desktop.adapter.name);
+  ok(desktop.migration?.mode === 'fresh', 'and a first run creates a library', desktop.migration?.mode);
+  await desktop.adapter.open();
+  ok((await desktop.adapter.list(COLLECTIONS.BOOKS)).length === 0, 'which starts empty');
+
+  const second = await createStorage({ desktop: true, fs, root: 'lib' });
+  ok(second.migration.mode === 'adopted', 'and the next launch adopts it', second.migration.mode);
+
+  // The first run above went looking for a browser library to migrate.
+  // `indexedDB.open` CREATES a database that is not there, so looking
+  // the naive way would leave an empty `ponyo-library` behind in the
+  // webview of every desktop install that never used the web version.
+  let names = [];
+  try { names = (await indexedDB.databases()).map((d) => d.name); } catch { names = []; }
+  ok(!names.includes('ponyo-library'),
+    'and looking for a browser library did not create one', names.join(', ') || 'none');
+}
+
+async function repositorySuite() {
+  scenario('the real repository runs on it, unmodified');
+  const fs = makeFakeFs();
+  const adapter = createFsAdapter({ fs, root: 'lib' });
+  const repo = createRepository(adapter);
+
+  const seeds = sampleBooks(5);
+  const result = await repo.init({ seedBooks: seeds, seedVersion: '1' });
+  ok(result.seeded === true, 'a fresh filesystem library seeds');
+  ok(repo.isDegraded === false, 'and is not degraded — it is really writing to disk');
+  ok(repo.count() === 5, 'five books on the shelves', String(repo.count()));
+
+  const first = repo.all()[0];
+  repo.update(first.id, { status: 'read', rating: 5 });
+  repo.setSetting('theme', 'ember');
+  const added = repo.add({ title: 'Added By Hand', author: 'Her', genre: 'Poetry' });
+  await adapter.flush();
+
+  const onDisk = JSON.parse(fs._text('lib/library.json'));
+  ok(onDisk.books.length === 6, 'an added book reached the disk', String(onDisk.books.length));
+  ok(onDisk.books.find((b) => b.id === first.id).rating === 5, 'and an edit to an existing one');
+  ok(onDisk.settings.some((s) => s.key === 'theme' && s.value === 'ember'), 'and a preference');
+
+  // A second repository over the same files — the reload case.
+  const reopened = createRepository(createFsAdapter({ fs, root: 'lib' }));
+  const again = await reopened.init({ seedBooks: seeds, seedVersion: '1' });
+  ok(again.seeded === false, 'reopening does not re-seed');
+  ok(reopened.count() === 6, 'and every book came back', String(reopened.count()));
+  ok(reopened.get(added.id)?.title === 'Added By Hand', 'including the one she added');
+  ok(reopened.getSetting('theme') === 'ember', 'and her theme');
+
+  scenario('backup and restore work over the filesystem adapter');
+  const cover = fileRecord({
+    id: 'fl_repo', bookId: added.id, seed: 13, size: 1500,
+    type: 'image/jpeg', name: 'c.jpg', role: 'cover',
+  });
+  await adapter.putBlob(cover);
+  const snap = await repo.snapshot();
+  ok(snap.books.length === 6, 'snapshot sees the books', String(snap.books.length));
+  ok(snap.files.length === 1 && snap.files[0].blob instanceof Blob,
+    'and carries the uploaded file as a live Blob');
+  ok(sameBytes(await bytesOf(snap.files[0].blob), pattern(13, 1500)), 'with the right bytes');
+}
+
+/* ══════════════════════════════ run ═════════════════════════════ */
+
+const started = performance.now();
+try {
+  await contractSuite();
+  await collectionsSuite();
+  await blobSuite();
+  await persistenceSuite();
+  await serialisationSuite();
+  await atomicitySuite();
+  await migrationSuite();
+  await platformSuite();
+  await repositorySuite();
+
+  scenario('the tests cleaned up after themselves');
+  for (const name of createdDbs) await deleteDb(name);
+  let listed = [];
+  try {
+    listed = (await indexedDB.databases()).map((d) => d.name);
+  } catch { listed = []; }
+  const strays = listed.filter((n) => n && n.startsWith('ponyo-fsmig-'));
+  ok(strays.length === 0, 'no throwaway databases were left behind', strays.join(', ') || 'none');
+  ok(!listed.includes('ponyo-library'),
+    'and her real library database was never created by these tests');
+
+  ok(window.__errors.length === 0, 'no console errors', window.__errors.slice(0, 3).join(' | '));
+} catch (error) {
+  fails += 1;
+  say(`\nFATAL  ${error?.stack || error}`);
+}
+
+say('');
+say(fails === 0 ? `ALL PASS (${checks} checks)` : `${fails} FAILURE(S) of ${checks} checks`);
+say(`${Math.round(performance.now() - started)}ms`);
+finish();
+</script>
+</body></html>
