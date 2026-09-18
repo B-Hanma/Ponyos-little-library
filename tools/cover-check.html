@@ -810,6 +810,222 @@ try {
 
   document.querySelectorAll('#drawer-root > *, .scrim').forEach((n) => n.remove());
 
+  /* ════════ 8. the real failing-image path, on a rendered card ════ */
+  //
+  // Everything above this point tests the cover POLICY: a book with no
+  // URL resolves to the drawn cover. That is not the offline case. The
+  // offline case is a book that HAS a URL which then fails to load, and
+  // it is handled somewhere else entirely — installCoverFallback(), two
+  // capture-phase listeners on `document`, installed once at boot.
+  //
+  // Until now nothing fired an error at a rendered .book__photo, so the
+  // behaviour every offline session depends on was never exercised.
+  scenario('a rendered OpenLibrary cover that fails to load');
+
+  // A book that still carries its shipped photograph and has not been
+  // touched by any scenario above.
+  const usedIds = new Set([book.id, shipped.id, cycleBook.id, overrideBook.id, legacyBook.id,
+    withUrl?.id].filter(Boolean));
+  const remote = repo.all().find((b) => b.coverUrl && !b.coverId && !usedIds.has(b.id));
+  ok(Boolean(remote), 'found an untouched book with a shipped cover', remote?.title);
+
+  store.set({ view: 'library' });
+  // A bounded wait rather than a bare rAF: if the shelf never rendered,
+  // this reports a timeout instead of hanging the whole harness.
+  await waitFor(
+    () => document.getElementById('view')
+      ?.querySelector(`[data-open="${remote.id}"]`)?.closest('.book'),
+    { label: 'the shelf to render' },
+  );
+
+  // Settle BEFORE taking any references, never after.
+  //
+  // Two things move in the first second: the card-in entrance animation,
+  // and a re-render triggered when the cover cache resolves an uploaded
+  // blob (app.js wires cache.onResolved to store.touch). A re-render
+  // swaps the contents of #view, so nodes captured beforehand are
+  // detached — and an event dispatched at a detached element never
+  // reaches the capture listener on `document`, which would make the
+  // removal silently not happen while `!isConnected` still passed.
+  await sleep(1200);
+
+  const view = document.getElementById('view');
+  const card = view.querySelector(`[data-open="${remote.id}"]`)?.closest('.book');
+  ok(Boolean(card) && card.isConnected, 'its card is on the shelf');
+
+  const art = card.querySelector('.book__art');
+  const cardPhoto = art.querySelector('img.book__photo');
+  const drawn = art.querySelector('svg');
+
+  ok(Boolean(cardPhoto), 'the card rendered a real <img> for the remote cover');
+  ok(Boolean(drawn), 'with the generated cover already underneath it');
+  ok(cardPhoto.getAttribute('src') === remote.coverUrl,
+    'and the image points at exactly the resolved OpenLibrary URL',
+    cardPhoto.getAttribute('src')?.slice(0, 64));
+  ok(/covers\.openlibrary\.org\/b\/id\//.test(cardPhoto.getAttribute('src')),
+    'which is the Open Library cover host');
+  ok(cardPhoto.getAttribute('src').includes(remote.coverRef),
+    'carrying this book’s own cover id', remote.coverRef);
+  ok(cardPhoto.getAttribute('src').includes('default=false'),
+    'with default=false, so a missing cover 404s instead of returning a grey placeholder');
+
+  // Geometry before, so "no layout shift" is measured rather than assumed.
+  // Everything has settled above, so these are stable numbers.
+  ok(cardPhoto.isConnected && drawn.isConnected,
+    'both layers are still live in the document right before the failure');
+  //
+  // Measured with offset* rather than getBoundingClientRect(): a rect is
+  // viewport-relative, so the card-in entrance transform and any scroll
+  // both move it without anything having shifted in the layout. The
+  // offset metrics are layout positions, immune to both — which is what
+  // "no layout shift" actually means.
+  const objectEl = card.querySelector('.book__object');
+  const boxBefore = {
+    width: objectEl.offsetWidth,
+    height: objectEl.offsetHeight,
+    top: card.offsetTop,
+    left: card.offsetLeft,
+  };
+  const drawnBefore = { width: drawn.getBoundingClientRect().width };
+  ok(boxBefore.width > 0 && boxBefore.height > 0,
+    'and the card has real geometry to compare against',
+    `${boxBefore.width} x ${boxBefore.height}`);
+  const errorsBefore = window.__errors.length;
+
+  // A real image error does not bubble; it is caught in the capture
+  // phase. Dispatching it with bubbles:false is therefore the faithful
+  // simulation, not a convenience.
+  const errorEvent = new Event('error');
+  ok(errorEvent.bubbles === false,
+    'the dispatched error does not bubble, exactly as a real one does not');
+  cardPhoto.dispatchEvent(errorEvent);
+  await tick();
+
+  ok(!cardPhoto.isConnected, 'the failed image removed itself from the document');
+  ok(art.querySelector('img') === null,
+    'leaving no <img> at all, so there is nothing to render a broken-image icon');
+  ok(art.querySelector('svg') === drawn && drawn.isConnected,
+    'while the generated cover underneath is untouched and still there');
+
+  const drawnAfter = drawn.getBoundingClientRect();
+  ok(drawnAfter.width > 0 && drawnAfter.height > 0,
+    'and is actually visible, with real dimensions',
+    `${Math.round(drawnAfter.width)} x ${Math.round(drawnAfter.height)}`);
+  ok(getComputedStyle(drawn).display !== 'none' && getComputedStyle(drawn).visibility !== 'hidden',
+    'not merely present but hidden');
+
+  const boxAfter = {
+    width: objectEl.offsetWidth,
+    height: objectEl.offsetHeight,
+    top: card.offsetTop,
+    left: card.offsetLeft,
+  };
+  ok(boxAfter.width === boxBefore.width && boxAfter.height === boxBefore.height,
+    'the cover box is exactly the same size: no layout shift',
+    `${boxBefore.width}x${boxBefore.height} -> ${boxAfter.width}x${boxAfter.height}`);
+  ok(boxAfter.top === boxBefore.top && boxAfter.left === boxBefore.left,
+    'and the card sits in exactly the same place in the grid',
+    `(${boxBefore.left}, ${boxBefore.top}) -> (${boxAfter.left}, ${boxAfter.top})`);
+  ok(Math.abs(drawnAfter.width - drawnBefore.width) < 0.5,
+    'and the drawn cover kept its own geometry too');
+
+  ok(window.__errors.length === errorsBefore,
+    'the fallback handler introduced no console error of its own',
+    window.__errors.slice(errorsBefore).join(' | '));
+
+  scenario('the same failure across every card on the shelf');
+
+  // The handler is delegated at the document, so it must work for a book
+  // it has never seen rather than only for the one wired up above.
+  const allPhotos = Array.from(view.querySelectorAll('img.book__photo'));
+  ok(allPhotos.length > 1, 'the shelf rendered many remote covers',
+    `${allPhotos.length} images`);
+  const sample = allPhotos.slice(0, 12);
+  const sampleArts = sample.map((img) => img.closest('.book__art'));
+  const sampleBoxes = sample.map((img) => img.closest('.book__object').getBoundingClientRect());
+
+  for (const img of sample) img.dispatchEvent(new Event('error'));
+  await tick();
+
+  ok(sample.every((img) => !img.isConnected),
+    'every one of them removed itself', `${sample.length} sampled`);
+  ok(sampleArts.every((a) => a.querySelector('img') === null),
+    'none of those cards is left holding a broken image');
+  ok(sampleArts.every((a) => {
+    const svg = a.querySelector('svg');
+    return svg && svg.getBoundingClientRect().width > 0;
+  }), 'and each still shows its generated cover at a real size');
+  ok(sample.every((img, i) => {
+    const now = sampleArts[i].closest('.book__object').getBoundingClientRect();
+    return Math.abs(now.width - sampleBoxes[i].width) < 0.5
+      && Math.abs(now.height - sampleBoxes[i].height) < 0.5;
+  }), 'with no card changing size, so the grid did not reflow');
+  ok(window.__errors.length === errorsBefore,
+    'still no console errors after twelve failures',
+    window.__errors.slice(errorsBefore).join(' | '));
+
+  scenario('a cover that loads successfully is shown normally');
+
+  // A real image that really loads, rather than a synthetic load event.
+  //
+  // The remote covers cannot be used for this: the other ~139 of them
+  // are genuinely failing against the network in the background, and the
+  // production error handler removes each as it fails — so any card
+  // image picked here can vanish mid-assertion. A data: URL cannot fail,
+  // which makes the success path deterministic while still going through
+  // the same delegated listener on a real rendered card.
+  const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  const host = view.querySelector('.book__art');
+  ok(Boolean(host), 'there is a cover slot to load an image into');
+
+  const loader = document.createElement('img');
+  loader.className = 'book__photo';
+  loader.alt = '';
+  const settled = new Promise((resolve) => {
+    loader.addEventListener('load', () => setTimeout(resolve, 0), { once: true });
+    loader.addEventListener('error', () => setTimeout(resolve, 0), { once: true });
+  });
+  host.append(loader);
+
+  ok(!loader.classList.contains('is-loaded'), 'it starts unmarked');
+  ok(Number(getComputedStyle(loader).opacity) === 0,
+    'and transparent until it has decoded', getComputedStyle(loader).opacity);
+
+  loader.src = TINY_PNG;
+  await settled;
+
+  ok(loader.isConnected, 'a successful load leaves the image in place');
+  ok(loader.classList.contains('is-loaded'),
+    'and the handler marks it loaded — from a real load event, not a simulated one');
+
+  // The fade is a 240ms transition, so give it time to finish.
+  await sleep(400);
+  ok(Number(getComputedStyle(loader).opacity) > 0.9,
+    'so the photograph fades in over the generated cover',
+    getComputedStyle(loader).opacity);
+  ok(host.querySelector('svg'),
+    'with the generated cover still behind it, never removed');
+  ok(window.__errors.length === errorsBefore,
+    'and the success path is silent too',
+    window.__errors.slice(errorsBefore).join(' | '));
+
+  loader.remove();
+
+  scenario('the policy order is still exactly as it was');
+
+  // Re-asserted here only to prove these DOM experiments changed nothing
+  // about the decision function. The originals above are untouched.
+  const probe = { coverUrl: 'https://covers.openlibrary.org/b/id/1-M.jpg', coverId: '', coverSource: '' };
+  ok(M.policy.resolveCover(probe).source === 'openlibrary',
+    'a remote URL still resolves as openlibrary');
+  ok(M.policy.resolveCover({ ...probe, coverId: 'fl_x' }, { objectUrl: 'blob:z' }).source === 'upload',
+    'an upload still outranks it');
+  ok(M.policy.resolveCover(probe, { override: { url: 'https://example.com/m.jpg', source: 'manual' } }).source
+    === 'manual', 'a manual override still sits between them');
+  ok(M.policy.resolveCover({ coverUrl: '', coverId: '', coverSource: '' }).source === 'generated',
+    'and nothing at all still falls through to the drawn cover');
+
   ok(window.__errors.length === 0, 'no console errors anywhere',
     window.__errors.slice(0, 4).join(' | '));
 } catch (error) {
