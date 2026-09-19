@@ -288,6 +288,27 @@ export async function runMigration({
     await purgeLibrary(fs, root);
   }
 
+  // Make the library directory before anything writes into it.
+  //
+  // Everything below this line writes: the marker first, then the
+  // pre-migration archive, then the records. The ONLY code that created
+  // this directory was the adapter's own open(), and that runs last -
+  // after createFresh and after the backup. On a fresh install, where
+  // neither com.ponyo.little-library nor library/ exists yet, the very
+  // first write therefore landed in a directory that was not there:
+  //
+  //   failed to open file at path: ...\library\library.json.tmp
+  //   with error: The system cannot find the path specified. (os error 3)
+  //
+  // The browser never hit this because IndexedDB has no directories, and
+  // the harness did not because its fake filesystem creates parent
+  // directories implicitly on write - a real one does not.
+  //
+  // mkdir here is recursive and idempotent, so it also creates the app
+  // data directory itself on a first run, and costs nothing on every
+  // run after that.
+  await fs.mkdir(root);
+
   // ── read the source, without touching it ──
   step('reading', 'looking for a browser library');
   const ownsSource = !source;
