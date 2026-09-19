@@ -686,5 +686,18 @@ try {
 } catch (error) {
   say('THREW: ' + (error && error.stack ? error.stack : error));
 }
+
+// Tell the runner the report is finished. See the note in regress.html:
+// the page announces its own finish line so the runner never has to
+// infer one from the page lifecycle. Outside the try/catch on purpose,
+// so a harness that threw still delivers its partial report and is
+// graded as a failure rather than timing out silently.
+const __sink = new URLSearchParams(location.search).get('sink');
+if (__sink) {
+  const __report = out.textContent;
+  if (!navigator.sendBeacon(__sink, new Blob([__report], { type: 'text/plain' }))) {
+    fetch(__sink, { method: 'POST', mode: 'no-cors', body: __report, keepalive: true }).catch(() => {});
+  }
+}
 </script>
 </body></html>

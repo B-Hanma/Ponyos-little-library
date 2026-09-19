@@ -21,6 +21,9 @@ param(
   [int]$BudgetMs = 90000,
   [int]$TimeoutSec = 180,
   [string]$ProfileDir = 'run',
+  # The result sink. A different port from run-async.ps1's 8799 so the
+  # two runners can never collide.
+  [int]$SinkPort = 8798,
   # Drop --virtual-time-budget. Needed by any harness that touches real
   # IndexedDB, which does not participate in virtual time and will hang
   # forever under it. --dump-dom waits for the load event either way, and
@@ -78,44 +81,57 @@ if (Get-Process msedge -ErrorAction SilentlyContinue) {
 $profilePath = Join-Path $scratch $ProfileDir
 if (Test-Path $profilePath) { Remove-Item $profilePath -Recurse -Force -ErrorAction SilentlyContinue }
 
+# The result sink. A separate port, so serve.ps1 is left alone.
+$listener = New-Object System.Net.HttpListener
+$listener.Prefixes.Add("http://localhost:$SinkPort/")
+try {
+  $listener.Start()
+} catch {
+  Write-Host "  Could not open the result sink on port $SinkPort." -ForegroundColor Red
+  Write-Host "  $($_.Exception.Message)"
+  exit 1
+}
+
+$sink = "http://localhost:$SinkPort/result"
+$url = "http://localhost:8765/$Harness" + "?sink=" + [System.Uri]::EscapeDataString($sink)
+
 $edgeArgs = @(
   '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
   '--disable-extensions', "--user-data-dir=`"$scratch\$ProfileDir`"",
-  # Make the suites hermetic.
-  #
-  # Rendering the shelf fires ~159 requests at covers.openlibrary.org.
-  # Not one assertion in any of these four suites depends on those
-  # images arriving: they check cover POLICY and the verified registry,
-  # which are pure data. The real image-failure path is cover-check's
-  # job, and that runs under run-async.ps1, which this does not touch.
-  #
-  # What the requests DO is make every run depend on a third-party CDN
-  # being reachable and quick from wherever CI happens to be. Measured
-  # locally that was 35 of regress's 102 seconds, and a rate-limited or
-  # slow datacentre route makes it unbounded.
-  #
-  # 127.0.0.1 rather than a black-hole address on purpose: nothing is
-  # listening on :443 there, so each request is refused immediately
-  # instead of waiting out a connect timeout.
-  #
-  # It must arrive as ONE argument. Unquoted, the spaces split it and
-  # Edge reads the remainder as a second URL - "Multiple targets are
-  # not supported in headless mode" - which is the same trap that the
-  # $ProfileDir comment at the top of this file describes.
-  '--host-resolver-rules="MAP covers.openlibrary.org 127.0.0.1"'
+  # No --virtual-time-budget and no --dump-dom. Real time, real async.
+  $url
 )
-if (-not $RealTime) { $edgeArgs += "--virtual-time-budget=$BudgetMs" }
-$edgeArgs += '--dump-dom'
-$edgeArgs += "http://localhost:8765/$Harness"
 
 $proc = Start-Process -FilePath $edgeExe -PassThru -NoNewWindow `
   -RedirectStandardOutput $dumpPath -RedirectStandardError $errPath `
   -ArgumentList $edgeArgs
-# Wait-Process THROWS on timeout, and with $ErrorActionPreference = 'Stop'
-# that aborts the script before the cleanup below — leaving a headless
-# Edge running, which then makes every later run hang too. Catch it.
-try { $proc | Wait-Process -Timeout $TimeoutSec -ErrorAction Stop }
-catch { Write-Host "  (Edge did not exit in $TimeoutSec s; killing it)" -ForegroundColor DarkYellow }
+
+# Wait for the harness to say it is finished.
+$report = $null
+$async = $listener.BeginGetContext($null, $null)
+if ($async.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) {
+  $context = $listener.EndGetContext($async)
+  $reader = New-Object System.IO.StreamReader($context.Request.InputStream, [System.Text.Encoding]::UTF8)
+  $report = $reader.ReadToEnd()
+  $reader.Close()
+  # sendBeacon never reads the response, but it must not be left open.
+  $context.Response.StatusCode = 204
+  $context.Response.Close()
+} else {
+  Write-Host "  (no report after $TimeoutSec s)" -ForegroundColor DarkYellow
+}
+$listener.Stop()
+$listener.Close()
+# No Wait-Process here any more.
+#
+# Nothing asks Edge to exit now: without --dump-dom it has no reason to,
+# and we no longer need it to, because the report arrived over the sink
+# above. Waiting for an exit that is never coming just burned the whole
+# timeout before every teardown - which is why the first run of this
+# transport still took 248s per suite while reporting ALL PASS.
+#
+# The report is in hand, so take the browser down immediately.
+#
 # Kill the TREE, not just the process we started.
 #
 # Stop-Process terminates one PID. Edge is a parent plus a tree of
@@ -144,9 +160,8 @@ while ((Get-Process msedge -ErrorAction SilentlyContinue) -and (Get-Date) -lt $g
   Start-Sleep -Milliseconds 250
 }
 
-$dom = Get-Content $dumpPath -Raw
-if ([string]::IsNullOrEmpty($dom)) {
-  'EMPTY DUMP. Edge stderr:'
+if ([string]::IsNullOrWhiteSpace($report)) {
+  'NO REPORT. The harness never reached its finish line. Edge stderr:'
   # 40 rather than 5: when this fires, the last five lines are always the
   # same benign Chromium chatter (an Edge LLM notice on Server SKUs, a
   # renderer task-provider warning) and whatever actually went wrong has
@@ -155,14 +170,6 @@ if ([string]::IsNullOrEmpty($dom)) {
   exit 1
 }
 
-$match = [regex]::Match($dom, '(?s)<pre id="out"[^>]*>(.*?)</pre>')
-if (-not $match.Success) {
-  'NO REPORT ELEMENT; first 900 chars:'
-  $dom.Substring(0, [Math]::Min(900, $dom.Length))
-  exit 1
-}
-
-$report = [System.Net.WebUtility]::HtmlDecode($match.Groups[1].Value)
 $report
 
 # ---------------------------------------------------------------- grading

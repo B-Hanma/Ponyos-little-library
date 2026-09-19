@@ -75,4 +75,13 @@ try {
   say('THREW: ' + (e && e.stack ? e.stack : e));
 }
 say('<<END>>');
+
+// Tell the runner the report is finished. See the note in regress.html.
+const __sink = new URLSearchParams(location.search).get('sink');
+if (__sink) {
+  const __report = out.textContent;
+  if (!navigator.sendBeacon(__sink, new Blob([__report], { type: 'text/plain' }))) {
+    fetch(__sink, { method: 'POST', mode: 'no-cors', body: __report, keepalive: true }).catch(() => {});
+  }
+}
 </script></body></html>

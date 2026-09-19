@@ -278,4 +278,23 @@ try {
 
 say(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);
 say('<<END>>');
+
+// Tell the runner the report is finished.
+//
+// The page announces its own finish line instead of letting the runner
+// infer one from the page lifecycle. This is the contract the async
+// suites have always used. run-checks.ps1 used to read the report with
+// --dump-dom, which fires at the load event - before an async harness
+// has written anything - and so needed --virtual-time-budget to hold
+// the dump back. That budget is what made Edge's lifetime scale with
+// machine load and time out on a slow CI runner.
+//
+// No sink means someone opened this page by hand: just render.
+const __sink = new URLSearchParams(location.search).get('sink');
+if (__sink) {
+  const __report = out.textContent;
+  if (!navigator.sendBeacon(__sink, new Blob([__report], { type: 'text/plain' }))) {
+    fetch(__sink, { method: 'POST', mode: 'no-cors', body: __report, keepalive: true }).catch(() => {});
+  }
+}
 </script></body></html>
