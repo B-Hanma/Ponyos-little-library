@@ -52,6 +52,16 @@ if (-not (Test-Path $scratch)) { New-Item -ItemType Directory -Path $scratch | O
 # A leftover headless Edge holds the profile lock and makes this hang.
 Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
+# ...and wait for them to actually be gone. Stop-Process does not block:
+# it asks Windows to terminate and returns, so without this the profile
+# directory is deleted and a fresh Edge launched while the old tree is
+# still dying. Same wait run-checks.ps1 already uses.
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Process msedge -ErrorAction SilentlyContinue) -and
+       (Get-Date) -lt $deadline) {
+  Start-Sleep -Milliseconds 250
+}
+
 # Throw the profile away every run. Edge caches the harness and every
 # module it imports, and the local server sends no validator, so a stale
 # profile can quietly grade the PREVIOUS version of the code.
@@ -95,7 +105,33 @@ if ($async.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) {
   $context.Response.Close()
 }
 
-try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { }
+# Edge starts a process tree. Killing only the parent can leave
+# renderer/GPU/network/utility/crashpad children behind and retain the
+# profile lock for the next suite - which is what made the FIRST
+# run-checks suite after this one fail while every later one passed.
+#
+# The try/catch is mandatory: an Edge that already exited after posting
+# its report makes taskkill write "process not found" to stderr, and
+# PowerShell 5.1 turns a native command's redirected stderr into a
+# TERMINATING NativeCommandError under $ErrorActionPreference = 'Stop'.
+try {
+  & taskkill.exe /T /F /PID $proc.Id 2>&1 | Out-Null
+} catch {
+  # Edge may already have exited after posting the report.
+}
+
+try {
+  Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+} catch {
+  # The parent may already be gone.
+}
+
+$goneBy = (Get-Date).AddSeconds(15)
+while ((Get-Process msedge -ErrorAction SilentlyContinue) -and
+       (Get-Date) -lt $goneBy) {
+  Start-Sleep -Milliseconds 250
+}
+
 $listener.Stop()
 $listener.Close()
 
