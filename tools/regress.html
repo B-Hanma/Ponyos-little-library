@@ -109,8 +109,18 @@ try {
     if (!drawer) { noOpen += 1; continue; }
     if (!drawer.querySelector('.detail__cover svg')) noCover += 1;
     shapes.add([...drawer.querySelectorAll('.detail__label')].map((e) => e.textContent.trim()).sort().join('|'));
-    document.querySelector('[data-close-drawer]')?.click();
-    await tick();
+    // No explicit close click here.
+    //
+    // It was a second store change per book, and every store change
+    // re-renders the whole 206-card grid - so this loop was doing 412
+    // full renders to open 206 books. openBookDetail already closes the
+    // previous drawer when the next one opens, so the click bought
+    // nothing except the render.
+    //
+    // Removing the nodes IS still required. A closing drawer stays in
+    // the DOM through its exit animation, so a document-wide
+    // querySelector on the next iteration can hand back the stale one
+    // instead of the drawer actually on screen.
     document.querySelector('.drawer')?.remove();
     document.querySelector('.scrim')?.remove();
   }
